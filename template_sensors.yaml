@@ -1,0 +1,180 @@
+# Template Sensors for Propane Calculations
+- sensor:
+    # Gallons Remaining
+    - name: "Propane Tank Gallons Remaining"
+      unique_id: propane_tank_gallons_remaining
+      unit_of_measurement: "gal"
+      device_class: volume_storage
+      state_class: measurement
+      state: >
+        {% set tank_capacity_gallons = states('sensor.amerigas_tank_size') | float(500) %}
+        {% set current_percentage = states('sensor.amerigas_tank_level') | float(0) %}
+        {{ (tank_capacity_gallons * (current_percentage / 100)) | round(2) }}
+
+    # Propane Used Since Last Delivery (for utility meters)
+    - name: "Propane Used Since Last Delivery"
+      unique_id: propane_used_since_last_delivery
+      unit_of_measurement: "gal"
+      state_class: measurement
+      icon: mdi:gas-station
+      state: >
+        {% set last_delivery = states('sensor.amerigas_last_delivery_gallons') | float(0) %}
+        {% set remaining = states('sensor.propane_tank_gallons_remaining') | float(0) %}
+        {% set used = last_delivery - remaining %}
+        {{ used if used >= 0 else 0 | round(2) }}
+    
+    # Propane Consumed in Cubic Feet (for Energy Dashboard)
+    - name: "Propane Energy Consumption"
+      unique_id: propane_energy_consumption
+      unit_of_measurement: "ft³"
+      device_class: gas
+      state_class: total_increasing
+      icon: mdi:fire
+      state: >
+        {% set last_delivery = states('sensor.amerigas_last_delivery_gallons') | float(0) %}
+        {% set remaining = states('sensor.propane_tank_gallons_remaining') | float(0) %}
+        {% set used_gallons = last_delivery - remaining %}
+        {% set used_gallons = used_gallons if used_gallons >= 0 else 0 %}
+        {% set cubic_feet = used_gallons * 36.3888 %}
+        {{ cubic_feet | round(2) }}
+
+    # Daily Average Usage (gal/day) - FIXED
+    - name: "Propane Daily Average Usage"
+      unique_id: propane_daily_average_usage
+      unit_of_measurement: "gal/day"
+      state_class: measurement
+      icon: mdi:chart-line
+      state: >
+        {% set last_delivery_date = states('sensor.amerigas_last_delivery_date') %}
+        {% set used = states('sensor.propane_used_since_last_delivery') | float(0) %}
+        
+        {% if last_delivery_date not in ['Unknown', 'unknown', 'unavailable', 'none', 'None'] %}
+          {% set delivery_datetime = as_datetime(last_delivery_date) %}
+          {% if delivery_datetime is not none %}
+            {% set days_since = (now() - delivery_datetime).days %}
+            {% if days_since > 0 %}
+              {{ (used / days_since) | round(2) }}
+            {% else %}
+              {{ 0 }}
+            {% endif %}
+          {% else %}
+            {{ 0 }}
+          {% endif %}
+        {% else %}
+          {{ 0 }}
+        {% endif %}
+      availability: >
+        {{ states('sensor.amerigas_last_delivery_date') not in ['Unknown', 'unknown', 'unavailable', 'none', 'None'] }}
+
+    # Estimated Days Until Empty (based on current usage rate)
+    - name: "Propane Days Until Empty"
+      unique_id: propane_days_until_empty
+      unit_of_measurement: "days"
+      state_class: measurement
+      icon: mdi:calendar-clock
+      state: >
+        {% set remaining = states('sensor.propane_tank_gallons_remaining') | float(0) %}
+        {% set daily_usage = states('sensor.propane_daily_average_usage') | float(0) %}
+        {% if daily_usage > 0 %}
+          {{ (remaining / daily_usage) | round(0) }}
+        {% else %}
+          {{ 999 }}
+        {% endif %}
+      availability: >
+        {{ states('sensor.propane_daily_average_usage') | float(0) > 0 }}
+
+    # Cost Per Gallon (from last delivery)
+    - name: "Propane Cost Per Gallon"
+      unique_id: propane_cost_per_gallon
+      unit_of_measurement: "$/gal"
+      state_class: measurement
+      icon: mdi:currency-usd
+      state: >
+        {% set last_payment = states('sensor.amerigas_last_payment_amount') | float(0) %}
+        {% set last_delivery = states('sensor.amerigas_last_delivery_gallons') | float(0) %}
+        {% if last_delivery > 0 %}
+          {{ (last_payment / last_delivery) | round(2) }}
+        {% else %}
+          {{ 0 }}
+        {% endif %}
+    
+    # Cost Per Cubic Foot (for Energy Dashboard pricing)
+    - name: "Propane Cost Per Cubic Foot"
+      unique_id: propane_cost_per_cubic_foot
+      unit_of_measurement: "$/ft³"
+      state_class: measurement
+      icon: mdi:currency-usd
+      state: >
+        {% set cost_per_gal = states('sensor.propane_cost_per_gallon') | float(0) %}
+        {% if cost_per_gal > 0 %}
+          {{ (cost_per_gal / 36.3888) | round(4) }}
+        {% else %}
+          {{ 0 }}
+        {% endif %}
+    
+    # Total Cost This Fill-Up Period
+    - name: "Propane Cost Since Last Delivery"
+      unique_id: propane_cost_since_last_delivery
+      unit_of_measurement: "$"
+      device_class: monetary
+      state_class: total
+      icon: mdi:cash
+      state: >
+        {% set used_gallons = states('sensor.propane_used_since_last_delivery') | float(0) %}
+        {% set cost_per_gal = states('sensor.propane_cost_per_gallon') | float(0) %}
+        {{ (used_gallons * cost_per_gal) | round(2) }}
+
+    # Estimated Cost to Refill
+    - name: "Propane Estimated Refill Cost"
+      unique_id: propane_estimated_refill_cost
+      unit_of_measurement: "$"
+      state_class: measurement
+      icon: mdi:cash-multiple
+      state: >
+        {% set tank_capacity = states('sensor.amerigas_tank_size') | float(500) %}
+        {% set remaining = states('sensor.propane_tank_gallons_remaining') | float(0) %}
+        {% set cost_per_gal = states('sensor.propane_cost_per_gallon') | float(0) %}
+        {% set gallons_needed = tank_capacity - remaining %}
+        {{ (gallons_needed * cost_per_gal) | round(2) }}
+
+    # Days Since Last Delivery (helper sensor)
+    - name: "Propane Days Since Last Delivery"
+      unique_id: propane_days_since_last_delivery
+      unit_of_measurement: "days"
+      icon: mdi:calendar
+      state: >
+        {% set last_delivery_date = states('sensor.amerigas_last_delivery_date') %}
+        {% if last_delivery_date not in ['Unknown', 'unknown', 'unavailable', 'none', 'None'] %}
+          {% set delivery_datetime = as_datetime(last_delivery_date) %}
+          {% if delivery_datetime is not none %}
+            {{ (now() - delivery_datetime).days }}
+          {% else %}
+            {{ 0 }}
+          {% endif %}
+        {% else %}
+          {{ 0 }}
+        {% endif %}
+      availability: >
+        {{ states('sensor.amerigas_last_delivery_date') not in ['Unknown', 'unknown', 'unavailable', 'none', 'None'] }}
+
+    # Comparison: Your estimate vs AmeriGas estimate
+    - name: "Propane Days Remaining Difference"
+      unique_id: propane_days_remaining_difference
+      unit_of_measurement: "days"
+      icon: mdi:compare
+      state: >
+        {% set amerigas_estimate = states('sensor.amerigas_days_remaining') | int(0) %}
+        {% set your_estimate = states('sensor.propane_days_until_empty') | int(0) %}
+        {{ (your_estimate - amerigas_estimate) }}
+      attributes:
+        amerigas_estimate: "{{ states('sensor.amerigas_days_remaining') }}"
+        your_estimate: "{{ states('sensor.propane_days_until_empty') }}"
+        more_accurate: >
+          {% set diff = states('sensor.propane_days_remaining_difference') | int(0) %}
+          {% if diff | abs < 5 %}
+            Similar estimates
+          {% elif diff > 0 %}
+            You're using less than AmeriGas predicted
+          {% else %}
+            You're using more than AmeriGas predicted
+          {% endif %}
