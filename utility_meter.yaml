@@ -1,0 +1,80 @@
+# Utility Meters for Propane Consumption Tracking
+
+# =============================================================================
+# GALLONS TRACKING (for personal use)
+# =============================================================================
+
+# Daily Consumption (gallons)
+daily_propane_consumed_gallons:
+  source: sensor.propane_used_since_last_delivery
+  cycle: daily
+  name: "Daily Propane (Gallons)"
+  unique_id: utility_meter_daily_propane_gal
+
+# Monthly Consumption (gallons)
+monthly_propane_consumed_gallons:
+  source: sensor.propane_used_since_last_delivery
+  cycle: monthly
+  name: "Monthly Propane (Gallons)"
+  unique_id: utility_meter_monthly_propane_gal
+
+# Yearly Consumption (gallons)
+yearly_propane_consumed_gallons:
+  source: sensor.propane_used_since_last_delivery
+  cycle: yearly
+  name: "Yearly Propane (Gallons)"
+  unique_id: utility_meter_yearly_propane_gal
+
+# =============================================================================
+# ENERGY DASHBOARD METERS (cubic feet - ft³)
+# =============================================================================
+# These use the propane_energy_consumption sensor which has:
+# - device_class: gas
+# - state_class: total_increasing
+# - unit_of_measurement: ft³
+
+# Daily Energy Consumption (for Energy Dashboard)
+daily_propane_energy:
+  source: sensor.propane_energy_consumption
+  cycle: daily
+  name: "Daily Propane Energy"
+  unique_id: utility_meter_daily_propane_energy
+
+# Monthly Energy Consumption (for Energy Dashboard)
+monthly_propane_energy:
+  source: sensor.propane_energy_consumption
+  cycle: monthly
+  name: "Monthly Propane Energy"
+  unique_id: utility_meter_monthly_propane_energy
+
+# Yearly Energy Consumption (for Energy Dashboard)
+yearly_propane_energy:
+  source: sensor.propane_energy_consumption
+  cycle: yearly
+  name: "Yearly Propane Energy"
+  unique_id: utility_meter_yearly_propane_energy
+
+# =============================================================================
+# COST TRACKING METERS
+# =============================================================================
+
+# Daily Cost
+daily_propane_cost:
+  source: sensor.propane_cost_since_last_delivery
+  cycle: daily
+  name: "Daily Propane Cost"
+  unique_id: utility_meter_daily_propane_cost
+
+# Monthly Cost
+monthly_propane_cost:
+  source: sensor.propane_cost_since_last_delivery
+  cycle: monthly
+  name: "Monthly Propane Cost"
+  unique_id: utility_meter_monthly_propane_cost
+
+# Yearly Cost
+yearly_propane_cost:
+  source: sensor.propane_cost_since_last_delivery
+  cycle: yearly
+  name: "Yearly Propane Cost"
+  unique_id: utility_meter_yearly_propane_cost
