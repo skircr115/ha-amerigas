@@ -1,0 +1,14 @@
+# AmeriGas Integration
+pyscript:
+  allow_all_imports: true
+  hass_is_global: true
+  apps:
+    amerigas:
+      username: "your_email@example.com"
+      password: "your_password_here"
+
+# Include template sensors
+template: !include template_sensors.yaml
+
+# Include utility meters
+utility_meter: !include utility_meter.yaml
