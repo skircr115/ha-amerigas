@@ -531,7 +531,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - 🐛 **Bug Reports:** [GitHub Issues](https://github.com/skircr115/ha-amerigas/issues)
 - 💡 **Feature Requests:** [GitHub Discussions](https://github.com/skircr115/ha-amerigas/discussions)
 - 💬 **Community:** [Home Assistant Forum](https://community.home-assistant.io/)
-- 📧 **Email:** your.email@example.com
 
 ---
 
