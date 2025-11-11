@@ -660,7 +660,7 @@ action:
 
 - Check [Troubleshooting Guide](TROUBLESHOOTING.md)
 - Visit [Home Assistant Forum](https://community.home-assistant.io/)
-- Open an [Issue on GitHub](https://github.com/yourusername/ha-amerigas/issues)
+- Open an [Issue on GitHub](https://github.com/skircr115/ha-amerigas/issues)
 
 ---
 
