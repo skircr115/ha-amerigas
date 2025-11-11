@@ -61,7 +61,7 @@ config/
 
 ### Step 3: Install/Update Files provided in this repository
 
-### 🔄 Step 4: Restart Home Assistant
+### Step 4: Restart Home Assistant
 
 After all files are in place:
 1. Go to **Settings > System > Restart**
