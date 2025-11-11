@@ -1,3 +1,4 @@
+# Add these lines to your existing configuration.yaml
 # AmeriGas Integration
 pyscript:
   allow_all_imports: true
