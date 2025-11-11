@@ -1,0 +1,19 @@
+type: vertical-stack
+cards:
+  - type: gauge
+    entity: sensor.amerigas_tank_level
+    min: 0
+    max: 100
+    name: Propane Tank
+    severity:
+      green: 40
+      yellow: 20
+      red: 0
+  
+  - type: entities
+    title: Tank Details
+    entities:
+      - entity: sensor.propane_tank_gallons_remaining
+      - entity: sensor.amerigas_days_remaining
+      - entity: sensor.propane_days_until_empty
+      - entity: sensor.amerigas_last_tank_reading

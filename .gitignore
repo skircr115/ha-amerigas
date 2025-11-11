@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test files
+test_*.py
+*_test.py
+
+# Secrets (DO NOT COMMIT)
+secrets.yaml
+*_secrets.yaml
+
+# User-specific
+configuration.yaml
+home-assistant.log
+home-assistant_v2.db
