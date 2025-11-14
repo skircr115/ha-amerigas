@@ -155,8 +155,8 @@ To disable automatic updates, comment out in `pyscript/amerigas.py`:
 | Sensor | Description | Unit |
 |--------|-------------|------|
 | `sensor.propane_tank_gallons_remaining` | Gallons left in tank | gal |
-| `sensor.propane_used_since_last_delivery` | Gallons consumed | gal |
-| `sensor.propane_energy_consumption` | Consumption in cubic feet | ft³ |
+| `sensor.propane_used_since_last_delivery` | Gallons consumed since last delivery | gal |
+| `sensor.propane_energy_consumption` | Consumption in cubic feet (for Energy Dashboard) | ft³ |
 | `sensor.propane_daily_average_usage` | Daily usage rate | gal/day |
 | `sensor.propane_days_until_empty` | Your estimate based on usage | days |
 | `sensor.propane_cost_per_gallon` | Price per gallon | $/gal |
@@ -166,7 +166,7 @@ To disable automatic updates, comment out in `pyscript/amerigas.py`:
 | `sensor.propane_days_since_last_delivery` | Days since last fill | days |
 | `sensor.propane_days_remaining_difference` | Comparison vs AmeriGas | days |
 
-### Utility Meters (9)
+### Utility Meters (6)
 
 **Gallons Tracking:**
 - `sensor.daily_propane_gallons`
@@ -178,10 +178,7 @@ To disable automatic updates, comment out in `pyscript/amerigas.py`:
 - `sensor.monthly_propane_energy`
 - `sensor.yearly_propane_energy`
 
-**Cost Tracking:**
-- `sensor.daily_propane_cost`
-- `sensor.monthly_propane_cost`
-- `sensor.yearly_propane_cost`
+> **Note:** Cost tracking is now handled through the `sensor.propane_cost_since_last_delivery` sensor which automatically tracks costs based on your consumption and the cost per gallon from your last delivery. Utility meters for costs have been removed as they were incompatible with the resetting nature of the cost sensor after each delivery.
 
 ## ⚡ Energy Dashboard
 
@@ -204,6 +201,12 @@ Your Energy Dashboard will show:
 - 💰 Cost tracking and trends
 - 📈 Comparison with electricity usage
 - 🔥 Total BTU/energy consumption
+
+### Important Notes
+
+- **Energy consumption resets after each delivery** - The `sensor.propane_energy_consumption` sensor tracks consumption since your last delivery. When you get a new delivery, it will reset and start counting from zero again.
+- **Partial refills are accounted for** - If you receive a partial refill (e.g., 29 gallons instead of a full tank), the calculations properly account for the starting amount based on what was delivered plus what remained.
+- **Cost tracking** - The `sensor.propane_cost_since_last_delivery` uses `state_class: total` which is appropriate for monetary tracking that resets periodically.
 
 ![Energy Dashboard](https://via.placeholder.com/800x400?text=Energy+Dashboard+Screenshot)
 
@@ -424,6 +427,17 @@ Search for: propane_energy_consumption
 - Ensure you have received at least one delivery
 - Verify `sensor.amerigas_last_payment_amount` has a value
 - Check `sensor.propane_cost_per_gallon` is calculating correctly
+- Note: Cost sensors use `state_class: total` which is correct for monetary device class
+
+### Common Warnings and How to Fix Them
+
+**Warning: "Entity sensor.propane_cost_since_last_delivery is using state class 'measurement' which is impossible considering device class ('monetary')"**
+- This has been fixed in the latest version
+- Cost sensors now use `state_class: total` which is correct for monetary tracking
+
+**Error: "could not convert string to float: '0.0\n# Comment'"**
+- This indicates a YAML formatting issue with comments in template sensors
+- Ensure all comments are on their own lines and not inside template blocks
 
 [Full troubleshooting guide →](docs/TROUBLESHOOTING.md)
 
@@ -452,6 +466,19 @@ MyAmeriGas Portal
        ↓
   Energy Dashboard
 ```
+
+### Consumption Calculation Logic
+
+The integration calculates consumption since your last delivery using this logic:
+
+1. **Starting Amount** = Remaining gallons + Delivered gallons
+2. **Used Amount** = Starting Amount - Current Remaining
+3. **Energy Consumption** = Used Amount × 36.3888 (converts gallons to ft³)
+
+This properly handles:
+- Full tank refills
+- Partial refills (e.g., 29 gallons when 80% capacity is 400 gallons)
+- Tank capacity limits (calculations cap at 80% of tank size by default)
 
 ## 🔐 Security & Privacy
 
