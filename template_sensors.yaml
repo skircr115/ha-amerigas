@@ -21,7 +21,7 @@
         {% set last_delivery = states('sensor.amerigas_last_delivery_gallons') | float(0) %}
         {% set remaining = states('sensor.propane_tank_gallons_remaining') | float(0) %}
         {% set used = last_delivery - remaining %}
-        {{ used if used >= 0 else 0 | round(2) }}
+        {{ (used if used >= 0 else 0) | round(2) }}
     
     # Propane Consumed in Cubic Feet (for Energy Dashboard)
     - name: "Propane Energy Consumption"
@@ -51,7 +51,7 @@
         {% if last_delivery_date not in ['Unknown', 'unknown', 'unavailable', 'none', 'None'] %}
           {% set delivery_datetime = as_datetime(last_delivery_date) %}
           {% if delivery_datetime is not none %}
-            {% set days_since = (now() - delivery_datetime).days %}
+            {% set days_since = (now().date() - delivery_datetime.date()).days %}
             {% if days_since > 0 %}
               {{ (used / days_since) | round(2) }}
             {% else %}
@@ -147,7 +147,8 @@
         {% if last_delivery_date not in ['Unknown', 'unknown', 'unavailable', 'none', 'None'] %}
           {% set delivery_datetime = as_datetime(last_delivery_date) %}
           {% if delivery_datetime is not none %}
-            {{ (now() - delivery_datetime).days }}
+            {% set days_since = (now().date() - delivery_datetime.date()).days %}
+            {{ days_since if days_since > 0 else 0 }}
           {% else %}
             {{ 0 }}
           {% endif %}
