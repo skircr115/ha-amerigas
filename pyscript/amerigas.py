@@ -1,3 +1,7 @@
+# ============================================================================
+# SAVE THIS AS: config/pyscript/amerigas.py
+# ============================================================================
+
 """
 AmeriGas Home Assistant Pyscript Integration
 Scrapes data from AmeriGas customer portal
@@ -138,7 +142,7 @@ async def amerigas_update():
             }
         )
         
-        # Tank Size (static value - no state_class)
+        # Tank Size (static value - ADDED state_class: 'measurement')
         tank_size = safe_int(account_data.get('TankSize'), 0)
         state.set(
             'sensor.amerigas_tank_size',
@@ -148,6 +152,7 @@ async def amerigas_update():
                 'icon': 'mdi:propane-tank-outline',
                 'friendly_name': 'AmeriGas Tank Size',
                 'device_class': 'volume_storage',
+                'state_class': 'measurement', # FIXED: Added state_class
                 'last_update': current_time
             }
         )
@@ -209,13 +214,14 @@ async def amerigas_update():
             }
         )
         
-        # Last Payment Amount (no state_class - single transaction)
+        # Last Payment Amount (ADDED state_class: 'measurement')
         last_payment_amount = safe_float(account_data.get('LastPaymentAmount'), 0.0)
         state.set(
             'sensor.amerigas_last_payment_amount',
             last_payment_amount,
             {
                 'unit_of_measurement': 'USD',
+                'state_class': 'measurement', # FIXED: Added state_class
                 'icon': 'mdi:credit-card',
                 'friendly_name': 'AmeriGas Last Payment Amount',
                 'last_update': current_time
@@ -228,6 +234,7 @@ async def amerigas_update():
             # Convert from format like "2025-11-07T05:45:00" to ISO timestamp
             try:
                 from datetime import datetime as dt
+                # Added replace('Z', '+00:00') to handle Z-suffix for correct ISO parsing
                 parsed_date = dt.fromisoformat(tm_read_date.replace('Z', '+00:00'))
                 tank_reading_iso = parsed_date.isoformat()
             except:
@@ -272,6 +279,7 @@ async def amerigas_update():
                         parsed_date = dt.strptime(str(last_delivery_date_raw), '%m/%d/%Y')
                     last_delivery_iso = parsed_date.isoformat()
                 else:
+                    # Assume it's an ISO format date string without time
                     last_delivery_iso = str(last_delivery_date_raw)
                 
                 log.debug(f"AmeriGas: Last delivery date: {last_delivery_iso}")
@@ -281,8 +289,10 @@ async def amerigas_update():
         
         state.set(
             'sensor.amerigas_last_delivery_date',
+            # Use 'unknown' if no valid date, otherwise use the ISO timestamp
             last_delivery_iso if last_delivery_iso else 'unknown',
             {
+                # device_class timestamp only if we have a valid ISO timestamp
                 'device_class': 'timestamp' if last_delivery_iso else None,
                 'icon': 'mdi:truck-delivery',
                 'friendly_name': 'AmeriGas Last Delivery Date',
@@ -291,12 +301,13 @@ async def amerigas_update():
             }
         )
         
-        # Last delivery gallons - no state_class (single transaction value)
+        # Last delivery gallons (ADDED state_class: 'measurement')
         state.set(
             'sensor.amerigas_last_delivery_gallons',
             last_delivery_gallons,
             {
                 'unit_of_measurement': 'gal',
+                'state_class': 'measurement', # FIXED: Added state_class
                 'icon': 'mdi:gas-station',
                 'friendly_name': 'AmeriGas Last Delivery Gallons',
                 'last_update': current_time
@@ -344,10 +355,10 @@ async def amerigas_update():
                     else:
                         parsed_date = dt.strptime(str(next_delivery_date), '%m/%d/%Y')
                 elif 'T' in str(next_delivery_date):
-                    # ISO format
+                    # ISO format - Added replace('Z', '+00:00') for safety
                     parsed_date = dt.fromisoformat(str(next_delivery_date).replace('Z', '+00:00'))
                 else:
-                    # Try as-is
+                    # Try as-is (assuming YYYY-MM-DD or similar)
                     parsed_date = dt.fromisoformat(str(next_delivery_date))
                 
                 next_delivery_iso = parsed_date.isoformat()

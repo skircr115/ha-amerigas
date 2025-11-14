@@ -1,26 +1,23 @@
+# utility_meter.yaml
 # Utility Meters for Propane Consumption Tracking
 
-# =============================================================================
-# GALLONS TRACKING (for personal use)
-# =============================================================================
-
-# Daily Consumption (gallons)
+# Daily Consumption (gallons - for personal tracking)
 daily_propane_consumed_gallons:
-  source: sensor.propane_used_since_last_delivery
+  source: sensor.propane_total_consumed_gallons
   cycle: daily
   name: "Daily Propane (Gallons)"
   unique_id: utility_meter_daily_propane_gal
 
-# Monthly Consumption (gallons)
+# Monthly Consumption (gallons - for personal tracking)
 monthly_propane_consumed_gallons:
-  source: sensor.propane_used_since_last_delivery
+  source: sensor.propane_total_consumed_gallons
   cycle: monthly
   name: "Monthly Propane (Gallons)"
   unique_id: utility_meter_monthly_propane_gal
 
-# Yearly Consumption (gallons)
+# Yearly Consumption (gallons - for personal tracking)
 yearly_propane_consumed_gallons:
-  source: sensor.propane_used_since_last_delivery
+  source: sensor.propane_total_consumed_gallons
   cycle: yearly
   name: "Yearly Propane (Gallons)"
   unique_id: utility_meter_yearly_propane_gal
@@ -53,28 +50,3 @@ yearly_propane_energy:
   cycle: yearly
   name: "Yearly Propane Energy"
   unique_id: utility_meter_yearly_propane_energy
-
-# =============================================================================
-# COST TRACKING METERS
-# =============================================================================
-
-# Daily Cost
-daily_propane_cost:
-  source: sensor.propane_cost_since_last_delivery
-  cycle: daily
-  name: "Daily Propane Cost"
-  unique_id: utility_meter_daily_propane_cost
-
-# Monthly Cost
-monthly_propane_cost:
-  source: sensor.propane_cost_since_last_delivery
-  cycle: monthly
-  name: "Monthly Propane Cost"
-  unique_id: utility_meter_monthly_propane_cost
-
-# Yearly Cost
-yearly_propane_cost:
-  source: sensor.propane_cost_since_last_delivery
-  cycle: yearly
-  name: "Yearly Propane Cost"
-  unique_id: utility_meter_yearly_propane_cost
