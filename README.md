@@ -105,17 +105,6 @@ utility_meter: !include utility_meter.yaml
 
 ⚠️ **Security Note:** Credentials must be in `configuration.yaml` under `pyscript:`. Pyscript cannot access `secrets.yaml` directly.
 
-### Optional: Adjust Tank Size
-
-If your tank is not 500 gallons, update in `template_sensors.yaml`:
-
-```yaml
-- sensor:
-    - name: "Propane Tank Gallons Remaining"
-      state: >
-        {% set tank_capacity_gallons = 1000 %}  # Change to your tank size
-        ...
-```
 
 ### Optional: Disable Auto-Updates
 
