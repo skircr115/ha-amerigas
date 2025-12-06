@@ -12,9 +12,76 @@
 - 🚚 **Delivery Tracking** - Last/next delivery dates, gallons delivered
 - 💰 **Payment Information** - Amount due, account balance, payment history
 - 📊 **Usage Analytics** - Daily/monthly/yearly consumption and costs
-- ⚡ **Energy Dashboard** - Full integration with Home Assistant Energy Dashboard
+- ⚡ **Energy Dashboard** - Full integration with Home Assistant Energy Dashboard (v2.0.0+ fixes spikes and statistics errors)
 - 🔔 **Smart Alerts** - Low propane, high usage, payment due notifications
 - 📈 **Cost Tracking** - Per-gallon pricing, estimated refill costs
+- 📉 **Lifetime Tracking** - NEW in v2.0.0: Permanent consumption tracking that never resets
+
+## 🆕 What's New in v2.0.0
+
+### Major Energy Dashboard Improvements
+
+**Problem Solved:** Previous versions had issues with Energy Dashboard integration:
+- Time-triggered updates caused data spikes
+- Statistics errors from incorrect `state_class` values
+- Data corruption on long-term energy tracking
+
+**Solution in v2.0.0:**
+- **State-triggered "ratchet" mechanism** - Updates only when tank level actually changes
+- **Lifetime tracking sensors** - Never reset, only increase
+- **Proper `state_class` attributes** - Fixes Home Assistant validation warnings
+
+### New Lifetime Tracking Sensors (2)
+
+| Sensor | Description | Purpose |
+|--------|-------------|---------|
+| `sensor.propane_lifetime_gallons` | Total gallons consumed (lifetime) | Tracks all consumption since installation |
+| `sensor.propane_lifetime_energy` | Total ft³ consumed (lifetime) | **PRIMARY sensor for Energy Dashboard** |
+
+**How it works:**
+- Monitors `sensor.propane_tank_gallons_remaining` for changes
+- When tank level drops (consumption): adds the difference to lifetime total
+- When tank level rises (delivery/thermal expansion): keeps lifetime total unchanged
+- Result: Clean, spike-free data perfect for Energy Dashboard
+
+### Energy Dashboard Migration Required
+
+⚠️ **IMPORTANT:** If upgrading from v1.x, you MUST update your Energy Dashboard configuration:
+
+**Old (v1.x):** 
+- Gas Source: `sensor.propane_energy_consumption` (resets after each delivery, causes issues)
+
+**New (v2.0.0):**
+- Gas Source: `sensor.propane_lifetime_energy` (never resets, reliable long-term tracking)
+
+### Bug Fixes & Improvements
+
+✅ **Fixed:**
+1. Energy Dashboard spikes from time-triggered updates
+2. Statistics errors from incorrect `state_class` values
+3. Datetime parsing errors (proper timezone handling)
+4. Negative usage values from thermal expansion
+5. Template sensor YAML errors from inline comments
+6. Monetary device class warnings
+7. Missing `state_class` on static sensors
+
+✅ **Improved:**
+- Added `state_class: measurement` to `amerigas_tank_size`, `last_payment_amount`, `last_delivery_gallons`
+- Better null/unknown value handling in all template sensors
+- Proper availability conditions on all sensors
+- ISO format datetime parsing with timezone support
+- Thermal expansion logic (prevents negative consumption)
+
+### Breaking Changes
+
+⚠️ **Energy Dashboard Source Change Required**
+- You MUST change your Energy Dashboard gas source from `sensor.propane_energy_consumption` to `sensor.propane_lifetime_energy`
+- The old sensor still exists for display purposes but should NOT be used for Energy Dashboard
+
+⚠️ **Cost Utility Meters Removed**
+- Removed: `daily_propane_cost`, `monthly_propane_cost`, `yearly_propane_cost`
+- Reason: Incompatible with delivery reset behavior
+- Replacement: Use `sensor.propane_cost_since_last_delivery` for cost tracking
 
 ## 📋 Table of Contents
 
@@ -23,6 +90,7 @@
 - [Configuration](#configuration)
 - [Sensors](#sensors)
 - [Energy Dashboard](#energy-dashboard)
+- [Migration Guide (v1.x to v2.0.0)](#migration-guide-v1x-to-v200)
 - [Dashboard Cards](#dashboard-cards)
 - [Automations](#automations)
 - [Troubleshooting](#troubleshooting)
@@ -105,7 +173,6 @@ utility_meter: !include utility_meter.yaml
 
 ⚠️ **Security Note:** Credentials must be in `configuration.yaml` under `pyscript:`. Pyscript cannot access `secrets.yaml` directly.
 
-
 ### Optional: Disable Auto-Updates
 
 To disable automatic updates, comment out in `pyscript/amerigas.py`:
@@ -121,39 +188,41 @@ To disable automatic updates, comment out in `pyscript/amerigas.py`:
 
 ### AmeriGas Portal Sensors (15)
 
-| Sensor | Description | Unit |
-|--------|-------------|------|
-| `sensor.amerigas_tank_level` | Current tank percentage | % |
-| `sensor.amerigas_tank_size` | Tank capacity | gal |
-| `sensor.amerigas_days_remaining` | AmeriGas estimate | days |
-| `sensor.amerigas_amount_due` | Current bill amount | $ |
-| `sensor.amerigas_account_balance` | Account balance | $ |
-| `sensor.amerigas_last_payment_date` | Last payment date | timestamp |
-| `sensor.amerigas_last_payment_amount` | Last payment amount | $ |
-| `sensor.amerigas_last_tank_reading` | Last monitor reading | timestamp |
-| `sensor.amerigas_last_delivery_date` | Last delivery date | timestamp |
-| `sensor.amerigas_last_delivery_gallons` | Gallons delivered | gal |
-| `sensor.amerigas_next_delivery_date` | Next scheduled delivery | timestamp |
-| `sensor.amerigas_auto_pay` | Auto pay status | text |
-| `sensor.amerigas_paperless` | Paperless billing status | text |
-| `sensor.amerigas_account_number` | Account number | text |
-| `sensor.amerigas_service_address` | Service address | text |
+| Sensor | Description | Unit | State Class |
+|--------|-------------|------|-------------|
+| `sensor.amerigas_tank_level` | Current tank percentage | % | measurement |
+| `sensor.amerigas_tank_size` | Tank capacity | gal | measurement |
+| `sensor.amerigas_days_remaining` | AmeriGas estimate | days | measurement |
+| `sensor.amerigas_amount_due` | Current bill amount | $ | total |
+| `sensor.amerigas_account_balance` | Account balance | $ | total |
+| `sensor.amerigas_last_payment_date` | Last payment date | timestamp | - |
+| `sensor.amerigas_last_payment_amount` | Last payment amount | $ | measurement |
+| `sensor.amerigas_last_tank_reading` | Last monitor reading | timestamp | - |
+| `sensor.amerigas_last_delivery_date` | Last delivery date | timestamp | - |
+| `sensor.amerigas_last_delivery_gallons` | Gallons delivered | gal | measurement |
+| `sensor.amerigas_next_delivery_date` | Next scheduled delivery | timestamp | - |
+| `sensor.amerigas_auto_pay` | Auto pay status | text | - |
+| `sensor.amerigas_paperless` | Paperless billing status | text | - |
+| `sensor.amerigas_account_number` | Account number | text | - |
+| `sensor.amerigas_service_address` | Service address | text | - |
 
-### Calculated Sensors (11)
+### Calculated Sensors (11 + 2 New)
 
-| Sensor | Description | Unit |
-|--------|-------------|------|
-| `sensor.propane_tank_gallons_remaining` | Gallons left in tank | gal |
-| `sensor.propane_used_since_last_delivery` | Gallons consumed since last delivery | gal |
-| `sensor.propane_energy_consumption` | Consumption in cubic feet (for Energy Dashboard) | ft³ |
-| `sensor.propane_daily_average_usage` | Daily usage rate | gal/day |
-| `sensor.propane_days_until_empty` | Your estimate based on usage | days |
-| `sensor.propane_cost_per_gallon` | Price per gallon | $/gal |
-| `sensor.propane_cost_per_cubic_foot` | Price per cubic foot | $/ft³ |
-| `sensor.propane_cost_since_last_delivery` | Current period cost | $ |
-| `sensor.propane_estimated_refill_cost` | Estimated next fill cost | $ |
-| `sensor.propane_days_since_last_delivery` | Days since last fill | days |
-| `sensor.propane_days_remaining_difference` | Comparison vs AmeriGas | days |
+| Sensor | Description | Unit | State Class |
+|--------|-------------|------|-------------|
+| `sensor.propane_tank_gallons_remaining` | Gallons left in tank | gal | measurement |
+| `sensor.propane_used_since_last_delivery` | Gallons consumed since last delivery | gal | total |
+| `sensor.propane_energy_consumption` | Consumption in ft³ (display only) | ft³ | total |
+| `sensor.propane_daily_average_usage` | Daily usage rate | gal/day | measurement |
+| `sensor.propane_days_until_empty` | Your estimate based on usage | days | measurement |
+| `sensor.propane_cost_per_gallon` | Price per gallon | $/gal | measurement |
+| `sensor.propane_cost_per_cubic_foot` | Price per cubic foot | $/ft³ | measurement |
+| `sensor.propane_cost_since_last_delivery` | Current period cost | $ | total |
+| `sensor.propane_estimated_refill_cost` | Estimated next fill cost | $ | measurement |
+| `sensor.propane_days_since_last_delivery` | Days since last fill | days | - |
+| `sensor.propane_days_remaining_difference` | Comparison vs AmeriGas | days | - |
+| **NEW: `sensor.propane_lifetime_gallons`** | **Total gallons consumed (lifetime)** | **gal** | **total_increasing** |
+| **NEW: `sensor.propane_lifetime_energy`** | **Total ft³ consumed (for Energy Dashboard)** | **ft³** | **total_increasing** |
 
 ### Utility Meters (6)
 
@@ -167,16 +236,16 @@ To disable automatic updates, comment out in `pyscript/amerigas.py`:
 - `sensor.monthly_propane_energy`
 - `sensor.yearly_propane_energy`
 
-> **Note:** Cost tracking is now handled through the `sensor.propane_cost_since_last_delivery` sensor which automatically tracks costs based on your consumption and the cost per gallon from your last delivery. Utility meters for costs have been removed as they were incompatible with the resetting nature of the cost sensor after each delivery.
+> **Note:** Cost utility meters have been removed in v2.0.0. Use `sensor.propane_cost_since_last_delivery` for cost tracking instead.
 
 ## ⚡ Energy Dashboard
 
-### Setup
+### Setup (v2.0.0+)
 
 1. **Add Gas Source**
    - Go to Settings → Dashboards → Energy
    - Click "Add Gas Source"
-   - Select: `Propane Energy Consumption`
+   - Select: **`Propane Lifetime Energy`** (NOT `Propane Energy Consumption`)
 
 2. **Add Cost Tracking**
    - Click on the gas source you added
@@ -186,18 +255,75 @@ To disable automatic updates, comment out in `pyscript/amerigas.py`:
 ### Result
 
 Your Energy Dashboard will show:
-- 📊 Daily/Monthly/Yearly propane consumption
+- 📊 Daily/Monthly/Yearly propane consumption (no spikes!)
 - 💰 Cost tracking and trends
 - 📈 Comparison with electricity usage
 - 🔥 Total BTU/energy consumption
+- ✅ Clean, reliable long-term statistics
 
 ### Important Notes
 
-- **Energy consumption resets after each delivery** - The `sensor.propane_energy_consumption` sensor tracks consumption since your last delivery. When you get a new delivery, it will reset and start counting from zero again.
-- **Partial refills are accounted for** - If you receive a partial refill (e.g., 29 gallons instead of a full tank), the calculations properly account for the starting amount based on what was delivered plus what remained.
-- **Cost tracking** - The `sensor.propane_cost_since_last_delivery` uses `state_class: total` which is appropriate for monetary tracking that resets periodically.
+**v2.0.0 Changes:**
+- ✅ **Use `sensor.propane_lifetime_energy`** for Energy Dashboard (never resets, reliable)
+- ⚠️ **DO NOT use `sensor.propane_energy_consumption`** for Energy Dashboard (resets after delivery, for display only)
+- ✅ The "ratchet" mechanism ensures only actual consumption is tracked
+- ✅ Deliveries and thermal expansion don't create false consumption spikes
+- ✅ Proper `state_class: total_increasing` prevents statistics errors
+
+**How Lifetime Tracking Works:**
+```
+Tank level drops (consumption) → Add to lifetime total
+Tank level rises (delivery/heat) → Keep lifetime total unchanged
+Result: Monotonically increasing value perfect for Energy Dashboard
+```
 
 ![Energy Dashboard](https://via.placeholder.com/800x400?text=Energy+Dashboard+Screenshot)
+
+## 🔄 Migration Guide (v1.x to v2.0.0)
+
+### Step 1: Backup Your Configuration
+```bash
+cp config/pyscript/amerigas.py config/pyscript/amerigas.py.backup
+cp config/template_sensors.yaml config/template_sensors.yaml.backup
+```
+
+### Step 2: Update Files
+1. Replace `pyscript/amerigas.py` with new version
+2. Replace `template_sensors.yaml` with new version
+3. Update `utility_meter.yaml` (cost meters removed)
+
+### Step 3: Update Energy Dashboard
+1. Go to Settings → Dashboards → Energy
+2. Click on your existing propane gas source
+3. Change source sensor from `sensor.propane_energy_consumption` to `sensor.propane_lifetime_energy`
+4. Save changes
+
+### Step 4: Reload & Restart
+```
+Developer Tools → YAML → Reload "Pyscript Python scripting"
+Developer Tools → YAML → Reload "Template Entities"
+Settings → System → Restart Home Assistant
+```
+
+### Step 5: Verify
+1. Check all sensors are available
+2. Verify `sensor.propane_lifetime_gallons` and `sensor.propane_lifetime_energy` exist
+3. Monitor Energy Dashboard for clean data (no spikes)
+4. Check logs for any errors
+
+### What to Expect
+- Lifetime sensors start at 0 and build up over time
+- Energy Dashboard will show clean, monotonically increasing data
+- No more statistics errors or unit change warnings
+- Historical data from v1.x remains intact
+
+### Rollback (if needed)
+```bash
+cp config/pyscript/amerigas.py.backup config/pyscript/amerigas.py
+cp config/template_sensors.yaml.backup config/template_sensors.yaml
+# Restart Home Assistant
+# Change Energy Dashboard back to sensor.propane_energy_consumption
+```
 
 ## 🎨 Dashboard Cards
 
@@ -248,6 +374,27 @@ entities:
     name: Cost This Period
   - entity: sensor.propane_estimated_refill_cost
     name: Est. Refill Cost
+```
+
+### NEW: Lifetime Tracking Card (v2.0.0+)
+
+```yaml
+type: entities
+title: Lifetime Propane Consumption
+entities:
+  - entity: sensor.propane_lifetime_gallons
+    name: Total Gallons Consumed
+    icon: mdi:gas-station
+  - entity: sensor.propane_lifetime_energy
+    name: Total Energy (ft³)
+    icon: mdi:fire
+  - type: divider
+  - entity: sensor.yearly_propane_gallons
+    name: This Year
+  - entity: sensor.monthly_propane_gallons
+    name: This Month
+  - entity: sensor.daily_propane_gallons
+    name: Today
 ```
 
 ### Account Information Card
@@ -381,6 +528,50 @@ Service: pyscript.amerigas_update
 Call Service
 ```
 
+### Lifetime Sensors Not Updating (v2.0.0+)
+
+**Problem:** `sensor.propane_lifetime_gallons` or `sensor.propane_lifetime_energy` stuck at 0 or not changing
+
+**Causes:**
+1. Tank level hasn't actually changed (sensors only update on consumption)
+2. Tank level sensor is unavailable
+3. Template sensors haven't reloaded
+
+**Solution:**
+```
+Developer Tools → YAML → Reload "Template Entities"
+Wait for actual consumption (tank level to drop)
+Check: Developer Tools → States → sensor.propane_tank_gallons_remaining
+```
+
+### Energy Dashboard Not Showing Propane (v2.0.0+)
+
+**Verify you're using the correct sensor:**
+```
+Developer Tools → States → sensor.propane_lifetime_energy
+```
+
+Should have:
+- `device_class: gas` ✓
+- `state_class: total_increasing` ✓ (NOT `total`)
+- `unit_of_measurement: ft³` ✓
+
+**Check for statistics errors:**
+```
+Developer Tools → Statistics
+Search for: propane_lifetime_energy
+```
+
+### Common v2.0.0 Warnings
+
+**Warning: "Entity sensor.daily_propane_gallons is using native unit of measurement 'gal' which is not a valid unit for the device class ('gas')"**
+
+**Solution:** This is expected. Gallon utility meters are for display only and don't have `device_class: gas`. Only the ft³ sensors need that device class. You can safely ignore this warning or remove the `device_class` from the utility meter configuration if it bothers you.
+
+**Warning: Unit changed from 'gal' to 'ft³'** (during migration)
+
+**Solution:** This happens when switching Energy Dashboard from the old sensor to new sensor. Click "Fix issue" in Developer Tools → Statistics and confirm the change.
+
 ### Login Fails
 
 - Verify credentials work on MyAmeriGas website
@@ -393,52 +584,20 @@ Call Service
 - Check YAML syntax with: `Developer Tools → YAML → Check Configuration`
 - Reload templates: `Developer Tools → YAML → Reload Template Entities`
 
-### Energy Dashboard Not Showing Propane
-
-**Verify sensor attributes:**
-```
-Developer Tools → States → sensor.propane_energy_consumption
-```
-
-Should have:
-- `device_class: gas`
-- `state_class: total_increasing`
-- `unit_of_measurement: ft³`
-
-**Check for statistics errors:**
-```
-Developer Tools → Statistics
-Search for: propane_energy_consumption
-```
-
-### Cost Tracking Issues
-
-- Ensure you have received at least one delivery
-- Verify `sensor.amerigas_last_payment_amount` has a value
-- Check `sensor.propane_cost_per_gallon` is calculating correctly
-- Note: Cost sensors use `state_class: total` which is correct for monetary device class
-
-### Common Warnings and How to Fix Them
-
-**Warning: "Entity sensor.propane_cost_since_last_delivery is using state class 'measurement' which is impossible considering device class ('monetary')"**
-- This has been fixed in the latest version
-- Cost sensors now use `state_class: total` which is correct for monetary tracking
-
-**Error: "could not convert string to float: '0.0\n# Comment'"**
-- This indicates a YAML formatting issue with comments in template sensors
-- Ensure all comments are on their own lines and not inside template blocks
-
 [Full troubleshooting guide →](docs/TROUBLESHOOTING.md)
 
 ## 📝 How It Works
 
+### v2.0.0 Architecture
+
 1. **Pyscript** logs into your MyAmeriGas account every 6 hours
 2. **Scrapes** the dashboard HTML for account data
 3. **Parses** JavaScript variables containing account information
-4. **Creates** 15 sensors with data from AmeriGas portal
+4. **Creates** 15 base sensors with data from AmeriGas portal
 5. **Template sensors** calculate usage, costs, and conversions
-6. **Utility meters** track daily/monthly/yearly consumption
-7. **Energy Dashboard** displays propane alongside electricity
+6. **State-triggered sensors** maintain lifetime tracking (THE RATCHET)
+7. **Utility meters** track daily/monthly/yearly consumption
+8. **Energy Dashboard** displays clean, spike-free propane data
 
 ### Data Flow
 
@@ -451,23 +610,55 @@ MyAmeriGas Portal
        ↓
   Template Sensors (calculations)
        ↓
-  Utility Meters (tracking)
+  State-Triggered Sensors (lifetime tracking)
        ↓
-  Energy Dashboard
+  Utility Meters (time-based tracking)
+       ↓
+  Energy Dashboard (clean, reliable data)
+```
+
+### The "Ratchet" Mechanism (v2.0.0+)
+
+**Problem:** Time-triggered updates caused spikes in Energy Dashboard
+
+**Solution:** State-triggered updates that only track actual consumption
+
+```python
+Trigger: sensor.propane_tank_gallons_remaining changes
+
+If current_level < previous_level:
+    # Consumption occurred
+    lifetime_total += (previous - current)
+    
+Else if current_level >= previous_level:
+    # Delivery or thermal expansion
+    lifetime_total stays the same (no change)
+
+Result: Monotonically increasing value, perfect for Energy Dashboard
 ```
 
 ### Consumption Calculation Logic
 
-The integration calculates consumption since your last delivery using this logic:
+**Since Last Delivery (Resets):**
+```
+Assumes tank filled to 80% capacity
+Used = (Tank_Size × 0.8) - Current_Remaining
+If negative (overfill/heat expansion): Show 0
+```
 
-1. **Starting Amount** = Remaining gallons + Delivered gallons
-2. **Used Amount** = Starting Amount - Current Remaining
-3. **Energy Consumption** = Used Amount × 36.3888 (converts gallons to ft³)
+**Lifetime Tracking (Never Resets):**
+```
+Only adds when tank level drops
+Ignores deliveries and thermal expansion
+Builds permanent consumption record
+```
 
 This properly handles:
 - Full tank refills
-- Partial refills (e.g., 29 gallons when 80% capacity is 400 gallons)
-- Tank capacity limits (calculations cap at 80% of tank size by default)
+- Partial refills
+- Thermal expansion (hot days)
+- Tank overfills
+- Multiple deliveries
 
 ## 🔐 Security & Privacy
 
@@ -538,7 +729,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - Built for the [Home Assistant](https://www.home-assistant.io/) community
 - Powered by [Pyscript](https://github.com/custom-components/pyscript)
 - Inspired by the need for better propane monitoring
-- Thanks to all contributors and users! (@Ricket)
+- Thanks to all contributors and users! (@Ricket and others)
+- Special thanks to the community for reporting Energy Dashboard issues that led to v2.0.0 improvements
 
 ## 💬 Support
 
