@@ -221,7 +221,6 @@
     - name: "Propane Lifetime Gallons"
       unique_id: propane_lifetime_gallons
       unit_of_measurement: "gal"
-      device_class: gas
       state_class: total_increasing
       icon: mdi:gas-station
       state: >
