@@ -1,52 +1,43 @@
 # utility_meter.yaml
+# =============================================================================
 # Utility Meters for Propane Consumption Tracking
-
-# Daily Consumption (gallons - for personal tracking)
-daily_propane_consumed_gallons:
-  source: sensor.propane_total_consumed_gallons
+# =============================================================================
+# GALLON TRACKING (Display)
+# -------------------------
+daily_propane_gallons:
+  source: sensor.propane_lifetime_gallons
   cycle: daily
   name: "Daily Propane (Gallons)"
   unique_id: utility_meter_daily_propane_gal
 
-# Monthly Consumption (gallons - for personal tracking)
-monthly_propane_consumed_gallons:
-  source: sensor.propane_total_consumed_gallons
+monthly_propane_gallons:
+  source: sensor.propane_lifetime_gallons
   cycle: monthly
   name: "Monthly Propane (Gallons)"
   unique_id: utility_meter_monthly_propane_gal
 
-# Yearly Consumption (gallons - for personal tracking)
-yearly_propane_consumed_gallons:
-  source: sensor.propane_total_consumed_gallons
+yearly_propane_gallons:
+  source: sensor.propane_lifetime_gallons
   cycle: yearly
   name: "Yearly Propane (Gallons)"
   unique_id: utility_meter_yearly_propane_gal
 
-# =============================================================================
-# ENERGY DASHBOARD METERS (cubic feet - ft³)
-# =============================================================================
-# These use the propane_energy_consumption sensor which has:
-# - device_class: gas
-# - state_class: total_increasing
-# - unit_of_measurement: ft³
-
-# Daily Energy Consumption (for Energy Dashboard)
+# ENERGY DASHBOARD TRACKING (ft³)
+# -------------------------------
 daily_propane_energy:
-  source: sensor.propane_energy_consumption
+  source: sensor.propane_lifetime_energy
   cycle: daily
   name: "Daily Propane Energy"
   unique_id: utility_meter_daily_propane_energy
 
-# Monthly Energy Consumption (for Energy Dashboard)
 monthly_propane_energy:
-  source: sensor.propane_energy_consumption
+  source: sensor.propane_lifetime_energy
   cycle: monthly
   name: "Monthly Propane Energy"
   unique_id: utility_meter_monthly_propane_energy
 
-# Yearly Energy Consumption (for Energy Dashboard)
 yearly_propane_energy:
-  source: sensor.propane_energy_consumption
+  source: sensor.propane_lifetime_energy
   cycle: yearly
   name: "Yearly Propane Energy"
   unique_id: utility_meter_yearly_propane_energy
