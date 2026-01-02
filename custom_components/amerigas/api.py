@@ -6,8 +6,10 @@ import base64
 import json
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
+
+from homeassistant.util import dt as dt_util
 
 from .const import API_LOGIN_URL, API_DASHBOARD_URL, API_TIMEOUT
 
@@ -119,29 +121,41 @@ class AmeriGasAPI:
                 return default
         
         def parse_date(date_str):
-            """Parse AmeriGas date in multiple formats (v2.1.0 enhancement)."""
+            """Parse AmeriGas date in multiple formats, always returns timezone-aware datetime."""
             if not date_str or date_str in ['', 'N/A', 'Unknown', 'None']:
                 return None
             
             try:
+                dt_obj = None
+                
                 # ISO format with T
                 if 'T' in str(date_str):
                     if date_str.endswith('Z'):
-                        return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+                        dt_obj = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
                     else:
-                        return datetime.fromisoformat(date_str)
+                        dt_obj = datetime.fromisoformat(date_str)
                 
                 # US date format
                 elif '/' in str(date_str):
                     parts = str(date_str).split('/')
                     if len(parts) == 3:
                         if len(parts[2]) == 2:
-                            return datetime.strptime(str(date_str), '%m/%d/%y')
+                            dt_obj = datetime.strptime(str(date_str), '%m/%d/%y')
                         else:
-                            return datetime.strptime(str(date_str), '%m/%d/%Y')
+                            dt_obj = datetime.strptime(str(date_str), '%m/%d/%Y')
                 
                 # Fallback
-                return datetime.fromisoformat(str(date_str))
+                else:
+                    dt_obj = datetime.fromisoformat(str(date_str))
+                
+                # If we got a datetime, ensure it's timezone-aware
+                if dt_obj:
+                    if dt_obj.tzinfo is None:
+                        # Assume UTC if no timezone
+                        dt_obj = dt_obj.replace(tzinfo=timezone.utc)
+                    return dt_obj
+                
+                return None
                 
             except (ValueError, AttributeError, TypeError) as e:
                 _LOGGER.warning(f"Could not parse date '{date_str}': {e}")
