@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) 2025 skircr115
+Copyright (c) 2026 skircr115
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -19,28 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-DISCLAIMER:
-
-This is an unofficial integration and is not affiliated with, endorsed by, or 
-connected to AmeriGas Propane, Inc. or any of its affiliates.
-
-USE AT YOUR OWN RISK. The authors and contributors of this software:
-- Make no warranties about the accuracy of data
-- Are not responsible for any damages arising from use
-- Recommend always verifying propane levels manually
-- Advise following all AmeriGas safety guidelines
-
-AmeriGas and MyAmeriGas are trademarks of AmeriGas Propane, Inc.
-
-This integration relies on web scraping and may break if AmeriGas changes 
-their website structure. The integration may stop working at any time without 
-notice.
-
-Users are responsible for:
-- Securing their own Home Assistant instance
-- Protecting their AmeriGas account credentials
-- Complying with AmeriGas terms of service
-- Following all safety protocols for propane usage
