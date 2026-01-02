@@ -1,3 +1,103 @@
+# v3.0.1 Hotfix Release
+
+## Critical Bug Fix
+
+**Release Date:** January 2, 2025  
+**Type:** Hotfix  
+**Severity:** HIGH
+
+---
+
+## 🐛 Issues Fixed
+
+### Timezone-Aware Datetime Requirement
+
+**Problem:** Home Assistant requires all datetime sensor values to be timezone-aware, but the integration was returning timezone-naive datetimes from the API.
+
+**Symptoms:**
+- `ValueError: Invalid datetime: ... which is missing timezone information`
+- `TypeError: can't subtract offset-naive and offset-aware datetimes`
+- Several sensors failed to load:
+  - `sensor.propane_tank_last_tank_reading`
+  - `sensor.propane_tank_last_delivery_date`
+  - `sensor.propane_tank_daily_average_usage`
+  - `sensor.propane_tank_days_since_last_delivery`
+
+**Solution:** Updated `api.py` to ensure all parsed dates return timezone-aware datetime objects.
+
+---
+
+## 🔧 Technical Changes
+
+### api.py
+
+**Added imports:**
+```python
+from datetime import datetime, timezone
+from homeassistant.util import dt as dt_util
+```
+
+**Updated parse_date() function:**
+- Now ensures all returned datetime objects are timezone-aware
+- Assumes UTC timezone if none specified (standard for AmeriGas data)
+- Maintains backward compatibility with all date formats
+
+**Key change:**
+```python
+# Ensure timezone-aware
+if dt_obj:
+    if dt_obj.tzinfo is None:
+        # Assume UTC if no timezone
+        dt_obj = dt_obj.replace(tzinfo=timezone.utc)
+    return dt_obj
+```
+
+---
+
+## ✅ Verification
+
+After applying v3.0.1:
+- [x] All 37 sensors load correctly
+- [x] No datetime errors in logs
+- [x] Timestamp sensors show proper values
+- [x] Daily average usage calculates correctly
+- [x] Days since delivery works properly
+
+---
+
+## 📦 Installation
+
+### New Installations
+- Use v3.0.1 directly (includes all fixes)
+
+### Upgrading from v3.0.0
+1. Download amerigas-v3.0.1.zip
+2. Replace `custom_components/amerigas/api.py`
+3. Restart Home Assistant
+
+**OR**
+
+Wait for HACS automatic update (if already released to HACS)
+
+---
+
+## 🎯 Impact
+
+**Severity:** HIGH - Integration would not load properly in v3.0.0
+
+**Affected Users:** All v3.0.0 users
+
+**Recommendation:** Upgrade immediately to v3.0.1
+
+---
+
+## 📊 Version History
+
+| Version | Status | Notes |
+|---------|--------|-------|
+| v3.0.0 | ❌ Broken | Timezone issues |
+| v3.0.1 | ✅ Fixed | All sensors work |
+
 # Release Notes - v3.0.0
 
 ## 🎉 Major Release - Native Custom Component
