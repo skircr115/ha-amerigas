@@ -77,9 +77,12 @@ async def async_setup_entry(
     ])
     
     # Lifetime tracking sensors (v2.0.0+)
+    lifetime_gallons_sensor = PropaneLifetimeGallonsSensor(coordinator, hass)
+    lifetime_energy_sensor = PropaneLifetimeEnergySensor(coordinator, hass, lifetime_gallons_sensor)
+    
     sensors.extend([
-        PropaneLifetimeGallonsSensor(coordinator, hass),
-        PropaneLifetimeEnergySensor(coordinator, hass),
+        lifetime_gallons_sensor,
+        lifetime_energy_sensor,
     ])
     
     async_add_entities(sensors)
@@ -99,6 +102,77 @@ class AmeriGasSensorBase(CoordinatorEntity, SensorEntity):
             "manufacturer": "AmeriGas",
             "model": "AmeriGas Account",
         }
+    
+    def _calculate_gallons_remaining(self) -> float | None:
+        """Calculate gallons remaining from coordinator data."""
+        tank_size = self.coordinator.data.get("tank_size") or DEFAULT_TANK_SIZE
+        percent = self.coordinator.data.get("tank_level") or 0
+        
+        # Bounds check
+        if percent < 0:
+            percent = 0
+        elif percent > 100:
+            percent = 100
+        
+        if tank_size <= 0:
+            return None
+        
+        return round(tank_size * (percent / 100), 2)
+    
+    def _calculate_used_since_delivery(self) -> float | None:
+        """Calculate gallons used since delivery from coordinator data."""
+        tank_size = self.coordinator.data.get("tank_size") or DEFAULT_TANK_SIZE
+        tank_level = self.coordinator.data.get("tank_level") or 0
+        
+        # Bounds check
+        if tank_level < 0:
+            tank_level = 0
+        elif tank_level > 100:
+            tank_level = 100
+        
+        current = tank_size * (tank_level / 100)
+        last_delivery = self.coordinator.data.get("last_delivery_gallons") or 0
+        
+        # Calculate used amount
+        if last_delivery > 0:
+            estimated_before = tank_size * 0.20
+            starting_level = estimated_before + last_delivery
+            if starting_level > tank_size:
+                starting_level = tank_size
+            used = starting_level - current
+        else:
+            full_fill_level = tank_size * DEFAULT_FILL_PERCENTAGE
+            used = full_fill_level - current
+        
+        return max(0, round(used, 2))
+    
+    def _calculate_daily_average(self) -> float | None:
+        """Calculate daily average usage from coordinator data."""
+        last_date = self.coordinator.data.get("last_delivery_date")
+        if not last_date:
+            return None
+        
+        used = self._calculate_used_since_delivery()
+        if used is None:
+            return None
+        
+        now = dt_util.now()
+        days = (now - last_date).days
+        
+        if days <= 0:
+            return None
+        
+        return round(used / days, 2)
+    
+    def _calculate_cost_per_gallon(self) -> float | None:
+        """Calculate cost per gallon from coordinator data."""
+        payment = self.coordinator.data.get("last_payment_amount") or 0
+        delivery = self.coordinator.data.get("last_delivery_gallons") or 0
+        
+        if delivery <= 0:
+            return None
+        
+        return round(payment / delivery, 2)
 
 
 # =============================================================================
@@ -459,7 +533,7 @@ class PropaneEnergyConsumptionSensor(AmeriGasSensorBase):
     def native_value(self) -> float | None:
         """Return energy in cubic feet."""
         # Get from UsedSinceDelivery sensor
-        used_sensor = self.hass.states.get("sensor.propane_used_since_last_delivery")
+        used_sensor = self.hass.states.get("sensor.propane_tank_used_since_last_delivery")
         if used_sensor and used_sensor.state not in ("unknown", "unavailable"):
             gallons = float(used_sensor.state)
             return round(gallons * GALLONS_TO_CUBIC_FEET, 2)
@@ -483,12 +557,31 @@ class PropaneDailyAverageUsageSensor(AmeriGasSensorBase):
         if not last_date:
             return None
         
-        # Get used amount
-        used_sensor = self.hass.states.get("sensor.propane_used_since_last_delivery")
-        if not used_sensor or used_sensor.state in ("unknown", "unavailable"):
-            return None
+        # Calculate used amount directly
+        tank_size = self.coordinator.data.get("tank_size") or DEFAULT_TANK_SIZE
+        tank_level = self.coordinator.data.get("tank_level") or 0
         
-        used = float(used_sensor.state)
+        # Bounds check
+        if tank_level < 0:
+            tank_level = 0
+        elif tank_level > 100:
+            tank_level = 100
+        
+        current = tank_size * (tank_level / 100)
+        last_delivery = self.coordinator.data.get("last_delivery_gallons") or 0
+        
+        # Calculate used amount (same logic as UsedSinceDeliverySensor)
+        if last_delivery > 0:
+            estimated_before = tank_size * 0.20
+            starting_level = estimated_before + last_delivery
+            if starting_level > tank_size:
+                starting_level = tank_size
+            used = starting_level - current
+        else:
+            full_fill_level = tank_size * DEFAULT_FILL_PERCENTAGE
+            used = full_fill_level - current
+        
+        used = max(0, used)
         
         # Calculate days since delivery
         now = dt_util.now()
@@ -509,7 +602,8 @@ class PropaneDailyAverageUsageSensor(AmeriGasSensorBase):
         
         now = dt_util.now()
         days = (now - last_date).days
-        return days > 0
+        tank_size = self.coordinator.data.get("tank_size")
+        return days > 0 and tank_size and tank_size > 0
 
 
 class PropaneDaysUntilEmptySensor(AmeriGasSensorBase):
@@ -524,18 +618,11 @@ class PropaneDaysUntilEmptySensor(AmeriGasSensorBase):
     @property
     def native_value(self) -> int | None:
         """Return days until empty."""
-        # Get remaining gallons
-        remaining_sensor = self.hass.states.get("sensor.propane_gallons_remaining")
-        if not remaining_sensor or remaining_sensor.state in ("unknown", "unavailable"):
-            return None
+        remaining = self._calculate_gallons_remaining()
+        avg_usage = self._calculate_daily_average()
         
-        # Get daily usage
-        usage_sensor = self.hass.states.get("sensor.propane_daily_average_usage")
-        if not usage_sensor or usage_sensor.state in ("unknown", "unavailable"):
+        if remaining is None or avg_usage is None:
             return None
-        
-        remaining = float(remaining_sensor.state)
-        avg_usage = float(usage_sensor.state)
         
         # v2.1.0: Return None instead of 999
         if remaining <= 0 or avg_usage <= 0.1:
@@ -546,19 +633,11 @@ class PropaneDaysUntilEmptySensor(AmeriGasSensorBase):
     @property
     def available(self) -> bool:
         """Return availability."""
-        remaining_sensor = self.hass.states.get("sensor.propane_gallons_remaining")
-        usage_sensor = self.hass.states.get("sensor.propane_daily_average_usage")
+        remaining = self._calculate_gallons_remaining()
+        avg_usage = self._calculate_daily_average()
         
-        if not remaining_sensor or not usage_sensor:
+        if remaining is None or avg_usage is None:
             return False
-        
-        if remaining_sensor.state in ("unknown", "unavailable"):
-            return False
-        if usage_sensor.state in ("unknown", "unavailable"):
-            return False
-        
-        remaining = float(remaining_sensor.state)
-        avg_usage = float(usage_sensor.state)
         
         return remaining > 0 and avg_usage > 0.1
 
@@ -604,15 +683,21 @@ class PropaneCostPerCubicFootSensor(AmeriGasSensorBase):
     @property
     def native_value(self) -> float | None:
         """Return cost per cubic foot."""
-        cost_gal_sensor = self.hass.states.get("sensor.propane_cost_per_gallon")
-        if not cost_gal_sensor or cost_gal_sensor.state in ("unknown", "unavailable"):
+        payment = self.coordinator.data.get("last_payment_amount") or 0
+        delivery = self.coordinator.data.get("last_delivery_gallons") or 0
+        
+        if delivery <= 0:
             return None
         
-        cost_gal = float(cost_gal_sensor.state)
-        if cost_gal <= 0:
-            return None
-        
-        return round(cost_gal / GALLONS_TO_CUBIC_FEET, 4)
+        cost_per_gallon = payment / delivery
+        return round(cost_per_gallon / GALLONS_TO_CUBIC_FEET, 4)
+    
+    @property
+    def available(self) -> bool:
+        """Return availability."""
+        payment = self.coordinator.data.get("last_payment_amount") or 0
+        delivery = self.coordinator.data.get("last_delivery_gallons") or 0
+        return delivery > 0
 
 
 class PropaneCostSinceDeliverySensor(AmeriGasSensorBase):
@@ -628,17 +713,11 @@ class PropaneCostSinceDeliverySensor(AmeriGasSensorBase):
     @property
     def native_value(self) -> float | None:
         """Return cost since delivery."""
-        used_sensor = self.hass.states.get("sensor.propane_used_since_last_delivery")
-        cost_sensor = self.hass.states.get("sensor.propane_cost_per_gallon")
+        used = self._calculate_used_since_delivery()
+        cost = self._calculate_cost_per_gallon()
         
-        if not used_sensor or not cost_sensor:
+        if used is None or cost is None:
             return None
-        
-        if used_sensor.state in ("unknown", "unavailable") or cost_sensor.state in ("unknown", "unavailable"):
-            return None
-        
-        used = float(used_sensor.state)
-        cost = float(cost_sensor.state)
         
         return round(used * cost, 2)
 
@@ -656,18 +735,11 @@ class PropaneEstimatedRefillCostSensor(AmeriGasSensorBase):
     def native_value(self) -> float | None:
         """Return estimated refill cost."""
         tank_size = self.coordinator.data.get("tank_size") or DEFAULT_TANK_SIZE
+        remaining = self._calculate_gallons_remaining()
+        cost = self._calculate_cost_per_gallon()
         
-        remaining_sensor = self.hass.states.get("sensor.propane_gallons_remaining")
-        cost_sensor = self.hass.states.get("sensor.propane_cost_per_gallon")
-        
-        if not remaining_sensor or not cost_sensor:
+        if remaining is None or cost is None:
             return None
-        
-        if remaining_sensor.state in ("unknown", "unavailable") or cost_sensor.state in ("unknown", "unavailable"):
-            return None
-        
-        remaining = float(remaining_sensor.state)
-        cost = float(cost_sensor.state)
         
         needed = tank_size - remaining
         
@@ -718,19 +790,29 @@ class PropaneDaysRemainingDifferenceSensor(AmeriGasSensorBase):
         """Return difference in estimates."""
         amerigas = self.coordinator.data.get("days_remaining") or 0
         
-        mine_sensor = self.hass.states.get("sensor.propane_days_until_empty")
-        if not mine_sensor or mine_sensor.state in ("unknown", "unavailable"):
+        # Calculate our own estimate
+        remaining = self._calculate_gallons_remaining()
+        avg_usage = self._calculate_daily_average()
+        
+        if remaining is None or avg_usage is None:
             return None
         
-        mine = int(mine_sensor.state)
+        if remaining <= 0 or avg_usage <= 0.1:
+            return None
+        
+        mine = round(remaining / avg_usage)
         
         return mine - amerigas
     
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return extra attributes."""
-        mine_sensor = self.hass.states.get("sensor.propane_days_until_empty")
-        mine = int(mine_sensor.state) if mine_sensor and mine_sensor.state not in ("unknown", "unavailable") else None
+        remaining = self._calculate_gallons_remaining()
+        avg_usage = self._calculate_daily_average()
+        
+        mine = None
+        if remaining and avg_usage and remaining > 0 and avg_usage > 0.1:
+            mine = round(remaining / avg_usage)
         
         return {
             "amerigas_estimate": self.coordinator.data.get("days_remaining"),
@@ -802,13 +884,11 @@ class PropaneLifetimeGallonsSensor(AmeriGasSensorBase, RestoreEntity):
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
-        # Get current gallons remaining
-        remaining_sensor = self.hass.states.get("sensor.propane_gallons_remaining")
-        if not remaining_sensor or remaining_sensor.state in ("unknown", "unavailable"):
+        # Get current gallons remaining using helper method
+        current_gallons = self._calculate_gallons_remaining()
+        if current_gallons is None:
             self.async_write_ha_state()
             return
-        
-        current_gallons = float(remaining_sensor.state)
         
         # First run - just store current value
         if self._previous_gallons is None:
@@ -873,6 +953,7 @@ class PropaneLifetimeGallonsSensor(AmeriGasSensorBase, RestoreEntity):
         }
 
 
+
 class PropaneLifetimeEnergySensor(AmeriGasSensorBase):
     """Lifetime energy sensor for Energy Dashboard."""
     
@@ -883,32 +964,32 @@ class PropaneLifetimeEnergySensor(AmeriGasSensorBase):
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
     _attr_icon = "mdi:fire"
     
-    def __init__(self, coordinator: DataUpdateCoordinator, hass: HomeAssistant) -> None:
+    def __init__(self, coordinator: DataUpdateCoordinator, hass: HomeAssistant, lifetime_gallons_sensor: PropaneLifetimeGallonsSensor) -> None:
         """Initialize the sensor."""
         super().__init__(coordinator)
         self._hass = hass
+        self._lifetime_gallons_sensor = lifetime_gallons_sensor
     
     @property
     def native_value(self) -> float | None:
         """Return lifetime energy in cubic feet."""
-        gallons_sensor = self.hass.states.get("sensor.propane_lifetime_gallons")
-        if not gallons_sensor or gallons_sensor.state in ("unknown", "unavailable"):
+        # Get directly from the lifetime gallons sensor instance
+        gallons = self._lifetime_gallons_sensor.native_value
+        if gallons is None:
             return None
         
-        gallons = float(gallons_sensor.state)
         return round(gallons * GALLONS_TO_CUBIC_FEET, 2)
     
     @property
     def available(self) -> bool:
         """Return availability."""
-        gallons_sensor = self.hass.states.get("sensor.propane_lifetime_gallons")
-        return gallons_sensor is not None and gallons_sensor.state not in ("unknown", "unavailable")
+        return self._lifetime_gallons_sensor.native_value is not None
     
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return extra attributes."""
         return {
-            "source_sensor": "sensor.propane_lifetime_gallons",
+            "source_sensor": "sensor.propane_tank_lifetime_gallons",
             "conversion_factor": GALLONS_TO_CUBIC_FEET,
-            "version": "2.1.0",
+            "version": "3.0.4",
         }

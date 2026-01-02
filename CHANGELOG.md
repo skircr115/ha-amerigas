@@ -5,6 +5,94 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.4] - 2025-01-02
+
+### 🎯 Major Refactor - Eliminate Entity ID Dependencies
+
+**BREAKING FIX:** Completely eliminates hardcoded entity ID lookups. Sensors now calculate directly from coordinator data or use direct sensor references.
+
+### Changed
+- **CRITICAL:** All cross-sensor dependencies now use coordinator data or direct references
+- Added helper methods to `AmeriGasSensorBase` for common calculations:
+  - `_calculate_gallons_remaining()` 
+  - `_calculate_used_since_delivery()`
+  - `_calculate_daily_average()`
+  - `_calculate_cost_per_gallon()`
+- Refactored all dependent sensors to use helper methods
+- `PropaneLifetimeEnergySensor` now receives direct reference to `PropaneLifetimeGallonsSensor`
+- **MAJOR BENEFIT:** Sensors now work regardless of entity ID renaming in UI
+
+### Fixed
+- **CRITICAL:** Sensors no longer break if user renames entity IDs in UI
+- Eliminated all `self.hass.states.get()` calls with hardcoded entity IDs
+- More efficient calculations (no state lookups needed)
+- Reduced potential for circular dependencies
+- More robust and reliable calculations
+
+### Technical Details
+Previous versions used hardcoded entity ID lookups like `self.hass.states.get("sensor.propane_tank_*")`. 
+This created two problems:
+1. **Fragile:** If user renamed entities in UI, dependent sensors broke
+2. **Inefficient:** Required state machine lookups instead of direct calculation
+
+New approach calculates everything directly from coordinator data or uses direct sensor 
+references passed during initialization. This makes the integration:
+- **Robust:** Works regardless of entity naming
+- **Efficient:** No unnecessary state lookups
+- **Maintainable:** Centralized calculation logic in base class
+
+**Sensors Refactored:**
+- Daily Average Usage
+- Days Until Empty  
+- Cost Per Cubic Foot
+- Cost Since Last Delivery
+- Estimated Refill Cost
+- Days Remaining Difference
+- Lifetime Gallons (coordinator update)
+- Lifetime Energy (direct reference)
+
+**Impact:** MEDIUM - Improves reliability and prevents future breakage  
+**Benefit:** Sensors now immune to entity ID changes
+
+---
+
+## [3.0.3] - 2025-01-02
+
+### 🐛 Hotfix - Cross-Sensor Entity ID References
+
+**HOTFIX:** Fixes incorrect entity ID references causing calculated sensors to show "unknown".
+
+### Fixed
+- **CRITICAL:** All cross-sensor references now use correct entity IDs with `propane_tank_` prefix
+- Cost Per Cubic Foot sensor now calculates correctly (was showing "unknown")
+- All sensors that depend on other sensor states now work properly
+- Entity IDs corrected from `sensor.propane_*` to `sensor.propane_tank_*`
+
+### Changed
+- Updated all `self.hass.states.get()` calls to use correct entity ID format
+- Cost Per Cubic Foot sensor now calculates directly from coordinator data (more efficient)
+- Added availability checks to dependent sensors
+
+### Technical Details
+With `_attr_has_entity_name = True` and device name "Propane Tank", Home Assistant 
+automatically generates entity IDs as `sensor.propane_tank_{sensor_name}` not 
+`sensor.propane_{sensor_name}`. All cross-sensor lookups were using the wrong format,
+causing dependent calculations to fail.
+
+**Affected Sensors (Now Fixed):**
+- Cost Per Cubic Foot
+- Daily Average Usage  
+- Days Until Empty
+- Cost Since Delivery
+- Estimated Refill Cost
+- Days Remaining Difference
+- Lifetime Energy
+- All sensors that reference other sensors
+
+**Impact:** HIGH - Many calculated sensors showed "unknown" due to failed lookups  
+**Upgrade:** Immediate for all v3.0.0, v3.0.1, v3.0.2 users
+
+---
 ## [3.0.2] - 2025-01-02
 
 ### 🐛 Hotfix - Lifetime Sensor State Restoration
