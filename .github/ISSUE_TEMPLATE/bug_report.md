@@ -1,15 +1,15 @@
 ---
 name: Bug Report
-about: Report a bug or issue
+about: Report a bug or issue with the integration
 title: '[BUG] '
 labels: bug
 assignees: ''
 ---
 
 **Environment:**
-- Home Assistant Version:
-- Pyscript Version:
-- Integration Version:
+- Home Assistant Version: 
+- Integration Version: 
+- Installation Method: [ ] HACS [ ] Manual
 
 **Describe the Bug:**
 A clear description of what the bug is.
@@ -26,10 +26,25 @@ What you expected to happen.
 What actually happened.
 
 **Logs:**
-[Paste relevant logs here]
+```
+[Paste relevant logs from Settings → System → Logs here]
+```
+
+**Sensors Affected:**
+- [ ] Tank level sensors
+- [ ] Delivery tracking
+- [ ] Cost calculations
+- [ ] Lifetime tracking
+- [ ] Energy Dashboard
+- [ ] Other: ___________
 
 **Screenshots:**
 If applicable, add screenshots.
 
+**Configuration:**
+- Tank Size: ___ gallons
+- Account Type: [ ] Automatic Delivery [ ] Will-Call
+- Tank Monitor: [ ] Yes [ ] No
+
 **Additional Context:**
-Any other information.
+Any other information that might help diagnose the issue.

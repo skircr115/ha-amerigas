@@ -7,8 +7,8 @@ Thank you for your interest in contributing! This document provides guidelines f
 - [Code of Conduct](#code-of-conduct)
 - [How Can I Contribute?](#how-can-i-contribute)
 - [Development Setup](#development-setup)
-- [Submission Guidelines](#submission-guidelines)
 - [Coding Standards](#coding-standards)
+- [Pull Request Process](#pull-request-process)
 - [Testing](#testing)
 
 ---
@@ -41,58 +41,35 @@ We are committed to providing a welcoming and inspiring community for all.
 ### Reporting Bugs
 
 **Before submitting a bug report:**
-- Check the [Troubleshooting Guide](TROUBLESHOOTING.md)
-- Search [existing issues](https://github.com/skircr115/ha-amerigas/issues) to see if it's already reported
+- Check existing [Issues](https://github.com/skircr115/ha-amerigas/issues)
 - Test with the latest version
+- Verify credentials work on MyAmeriGas website
 
-**When submitting a bug report, include:**
+**When submitting, include:**
 1. Home Assistant version
-2. Pyscript version
-3. Full error message from logs
-4. Steps to reproduce
-5. Expected vs actual behavior
-6. Screenshots if applicable
+2. Integration version
+3. Installation method (HACS or manual)
+4. Full error message from logs
+5. Steps to reproduce
+6. Expected vs actual behavior
+7. Sensor states (Developer Tools → States)
 
-**Example bug report:**
-```markdown
-**Environment:**
-- HA Version: 2024.1.0
-- Pyscript Version: 1.5.0
-- Integration Version: 2.0.0
+**Use the bug report template** when creating an issue.
 
-**Bug Description:**
-Tank level sensor shows unavailable after update
-
-**Steps to Reproduce:**
-1. Update integration to 2.0.0
-2. Restart HA
-3. Check sensor.amerigas_tank_level
-
-**Expected:** Sensor shows tank percentage
-**Actual:** Sensor shows "unavailable"
-
-**Logs:**
-```
-[Paste relevant logs here]
-```
-
-**Screenshots:**
-[If applicable]
-```
-
-### Suggesting Enhancements
-
-**Enhancement suggestions are welcome!**
+### Suggesting Features
 
 **Before suggesting:**
-- Check if it's already suggested in [Discussions](https://github.com/skircr115/ha-amerigas/discussions)
+- Check [Discussions](https://github.com/skircr115/ha-amerigas/discussions)
 - Consider if it fits the project scope
+- Think about implementation complexity
 
 **When suggesting, include:**
-1. **Clear description** of the enhancement
-2. **Use case** - why is this needed?
-3. **Examples** - how would it work?
-4. **Alternatives considered**
+1. Clear description of the feature
+2. Use case - why is this needed?
+3. Examples - how would it work?
+4. Alternatives considered
+
+**Use the feature request template** when creating an issue.
 
 ### Contributing Code
 
@@ -100,10 +77,9 @@ Tank level sensor shows unavailable after update
 - 🐛 Bug fixes
 - ✨ New features
 - 📝 Documentation improvements
-- 🎨 Dashboard card examples
-- 🔔 Automation examples
 - 🧪 Tests
-- 🌐 Translations (if applicable)
+- 🎨 Dashboard examples
+- 🔔 Automation examples
 
 ---
 
@@ -111,10 +87,10 @@ Tank level sensor shows unavailable after update
 
 ### Prerequisites
 
-- Home Assistant development environment
 - Python 3.11+
+- Home Assistant development environment
 - Git
-- Text editor or IDE
+- Code editor (VS Code recommended)
 
 ### Fork and Clone
 
@@ -125,73 +101,170 @@ cd ha-amerigas
 
 # Add upstream remote
 git remote add upstream https://github.com/skircr115/ha-amerigas.git
+
+# Create development branch
+git checkout -b feature/your-feature-name
 ```
 
-### Set Up Development Environment
+### Development Environment
 
 ```bash
-# Copy files to your HA test instance
-cp pyscript/amerigas.py /config/pyscript/
-cp template_sensors.yaml /config/
-cp utility_meter.yaml /config/
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
 
-# Configure test credentials
-nano /config/configuration.yaml
+# Install development dependencies
+pip install -r requirements_dev.txt
+
+# Install pre-commit hooks
+pre-commit install
 ```
 
 ### Testing Your Changes
 
-1. Make changes to the code
-2. Copy to HA test instance
-3. Reload Pyscript:
-   ```
-   Developer Tools → YAML → Reload "Pyscript Python scripting"
-   ```
-4. Test manually:
-   ```
-   Developer Tools → Services → pyscript.amerigas_update
-   ```
-5. Check logs for errors
-6. Verify sensor values
-7. Test automations
+1. **Copy to HA test instance:**
+```bash
+cp -r custom_components/amerigas /config/custom_components/
+```
+
+2. **Restart Home Assistant**
+
+3. **Configure integration:**
+   - Settings → Devices & Services → Add Integration
+   - Search "AmeriGas Propane"
+   - Enter test credentials
+
+4. **Verify:**
+   - All 37 sensors populate
+   - No errors in logs
+   - Manual update works
+   - Automations function
+
+5. **Check logs:**
+   - Settings → System → Logs
+   - Search for "amerigas"
 
 ---
 
-## Submission Guidelines
+## Coding Standards
 
-### Pull Request Process
+### Python
 
-1. **Create a branch** for your changes
-   ```bash
-   git checkout -b feature/your-feature-name
-   ```
+**Follow PEP 8 and Home Assistant conventions:**
 
-2. **Make your changes**
-   - Follow coding standards (below)
-   - Add/update documentation
-   - Test thoroughly
+```python
+# Good
+async def async_update_data() -> dict[str, Any]:
+    """Fetch data from AmeriGas API."""
+    try:
+        return await api.async_get_data()
+    except AmeriGasAPIError as err:
+        raise UpdateFailed(f"Error: {err}") from err
 
-3. **Commit your changes**
-   ```bash
-   git add .
-   git commit -m "feat: add tank monitoring alerts"
-   ```
+# Bad
+async def update():
+    data = await api.get()
+    return data
+```
 
-4. **Push to your fork**
-   ```bash
-   git push origin feature/your-feature-name
-   ```
+**Key rules:**
+- 4 spaces for indentation (no tabs)
+- Max line length: 88 characters (Black formatter)
+- Type hints for all function signatures
+- Docstrings for all public functions
+- Descriptive variable names
 
-5. **Open a Pull Request**
-   - Go to GitHub
-   - Click "New Pull Request"
-   - Fill out the template
-   - Link related issues
+**Error Handling:**
+```python
+# Always use specific exceptions
+try:
+    response = await session.post(url)
+except aiohttp.ClientError as err:
+    _LOGGER.error("Network error: %s", err)
+    raise CannotConnect from err
+except Exception as err:
+    _LOGGER.exception("Unexpected error")
+    raise
+```
 
-### Commit Message Guidelines
+**Logging:**
+```python
+# Use appropriate log levels
+_LOGGER.debug("Detailed debug info: %s", data)
+_LOGGER.info("Important status: Tank at %s%%", level)
+_LOGGER.warning("Warning: %s", issue)
+_LOGGER.error("Error occurred: %s", error)
+```
 
-Use [Conventional Commits](https://www.conventionalcommits.org/):
+### Code Formatting
 
+**Use Black and isort:**
+```bash
+# Format code
+black custom_components/amerigas/
+isort custom_components/amerigas/
+
+# Check formatting
+black --check custom_components/amerigas/
+```
+
+### Type Hints
+
+**Required for all functions:**
+```python
+from typing import Any
+
+async def async_get_data(self) -> dict[str, Any]:
+    """Fetch data."""
+    pass
+
+def parse_date(date_str: str) -> datetime | None:
+    """Parse date string."""
+    pass
+```
+
+### Documentation
+
+**Docstrings required:**
+```python
+def calculate_usage(
+    previous: float,
+    current: float,
+    threshold: float = 0.5
+) -> float:
+    """
+    Calculate propane usage with noise filtering.
+    
+    Args:
+        previous: Previous tank level in gallons
+        current: Current tank level in gallons
+        threshold: Minimum change to register (default 0.5)
+    
+    Returns:
+        Gallons consumed, or 0 if below threshold
+    """
+    diff = previous - current
+    return diff if diff > threshold else 0.0
+```
+
+---
+
+## Pull Request Process
+
+### Before Submitting
+
+**Checklist:**
+- [ ] Code follows style guidelines
+- [ ] All tests pass
+- [ ] Added tests for new features
+- [ ] Updated documentation
+- [ ] No breaking changes (or documented)
+- [ ] Commit messages follow convention
+- [ ] PR description is clear
+
+### Commit Messages
+
+**Use Conventional Commits:**
 ```
 <type>(<scope>): <subject>
 
@@ -203,130 +276,111 @@ Use [Conventional Commits](https://www.conventionalcommits.org/):
 **Types:**
 - `feat`: New feature
 - `fix`: Bug fix
-- `docs`: Documentation changes
-- `style`: Code style changes (formatting)
+- `docs`: Documentation
+- `style`: Formatting
 - `refactor`: Code refactoring
-- `test`: Adding tests
-- `chore`: Maintenance tasks
+- `test`: Tests
+- `chore`: Maintenance
 
 **Examples:**
-```
-feat(sensors): add next delivery date sensor
+```bash
+feat(sensor): add tank monitor battery status sensor
 
-fix(login): handle special characters in password
+fix(api): handle timeout errors gracefully
 
 docs(readme): update installation instructions
 
-style(pyscript): format code according to PEP 8
+refactor(sensor): improve lifetime tracking logic
 ```
 
-### Pull Request Template
+### PR Template
 
 ```markdown
 ## Description
 Brief description of changes
 
 ## Type of Change
-- [ ] Bug fix
-- [ ] New feature
+- [ ] Bug fix (non-breaking)
+- [ ] New feature (non-breaking)
+- [ ] Breaking change
 - [ ] Documentation update
-- [ ] Code refactoring
 
 ## Testing
 - [ ] Tested in development environment
 - [ ] All sensors work correctly
 - [ ] No errors in logs
-- [ ] Automations tested (if applicable)
+- [ ] Automations tested
 
 ## Checklist
-- [ ] Code follows project style guidelines
+- [ ] Code follows style guidelines
+- [ ] Self-review completed
 - [ ] Documentation updated
 - [ ] No breaking changes (or documented)
-- [ ] Commit messages follow guidelines
 
 ## Related Issues
 Fixes #123
-Relates to #456
+```
+
+### Review Process
+
+1. **Submit PR** to `main` branch
+2. **Automated checks** run (linting, tests)
+3. **Maintainer review** (within 1 week typically)
+4. **Address feedback** if requested
+5. **Approval and merge** when ready
+
+---
+
+## Testing
+
+### Manual Testing
+
+**Required tests:**
+- [ ] Fresh installation works
+- [ ] Configuration via UI successful
+- [ ] All 37 sensors populate
+- [ ] Values match MyAmeriGas website
+- [ ] Manual update works
+- [ ] No errors in logs
+- [ ] Energy Dashboard integration works
+- [ ] Lifetime tracking accurate
+- [ ] Restarts preserve state
+
+### Test Environments
+
+**Minimum:**
+- Home Assistant Core 2023.1+
+- Clean test instance
+
+**Ideal:**
+- Multiple HA versions
+- Different account types
+- With/without tank monitor
+
+### Automated Tests
+
+**Run tests:**
+```bash
+# Unit tests
+pytest tests/
+
+# Type checking
+mypy custom_components/amerigas/
+
+# Linting
+pylint custom_components/amerigas/
+flake8 custom_components/amerigas/
 ```
 
 ---
 
-## Coding Standards
+## Documentation
 
-### Python (Pyscript)
+### Code Comments
 
-**Follow PEP 8:**
-- 4 spaces for indentation (no tabs)
-- Max line length: 100 characters
-- Two blank lines between functions
-- Descriptive variable names
-
-**Good:**
-```python
-async def amerigas_update():
-    """Update all AmeriGas sensors."""
-    if not USERNAME or not PASSWORD:
-        log.error("AmeriGas: Credentials not configured")
-        return
-    
-    tank_level = safe_int(account_data.get('ForecastTankLevel'), 0)
-```
-
-**Bad:**
-```python
-async def update():
-    if not user or not pwd:
-        log.error("No creds")
-        return
-    lvl=account_data.get('ForecastTankLevel')
-```
-
-**Error Handling:**
-```python
-# Always use try/except for external calls
-try:
-    response = await session.post(url, data=data)
-except aiohttp.ClientError as e:
-    log.error(f"Network error: {e}")
-    return
-```
-
-**Logging:**
-```python
-# Use appropriate log levels
-log.debug("Detailed debug info")
-log.info("Important status updates")
-log.warning("Warning messages")
-log.error("Error messages")
-```
-
-### YAML
-
-**Template Sensors:**
-```yaml
-# Use consistent formatting
-- sensor:
-    - name: "Sensor Name"
-      unique_id: sensor_unique_id
-      unit_of_measurement: "unit"
-      state_class: measurement
-      icon: mdi:icon-name
-      state: >
-        {% set variable = states('sensor.source') | float(0) %}
-        {{ variable | round(2) }}
-```
-
-**Indentation:**
-- 2 spaces per level
-- No tabs
-- Consistent alignment
-
-### Documentation
-
-**Code Comments:**
 ```python
 # Good: Explain why, not what
-# Base64 encode credentials (required by AmeriGas API)
+# Base64 encode required by AmeriGas API authentication
 encoded_email = base64.b64encode(username.encode()).decode()
 
 # Bad: State the obvious
@@ -334,197 +388,45 @@ encoded_email = base64.b64encode(username.encode()).decode()
 encoded_email = base64.b64encode(username.encode()).decode()
 ```
 
-**Docstrings:**
-```python
-async def amerigas_update():
-    """
-    Update all AmeriGas sensors by scraping the customer portal.
-    
-    This service can be called from automations or manually.
-    It logs into MyAmeriGas, fetches account data, and updates
-    all 15 sensors with current information.
-    """
-```
-
----
-
-## Testing
-
-### Manual Testing Checklist
-
-Before submitting a PR, verify:
-
-**Installation:**
-- [ ] Fresh install works
-- [ ] Upgrade from previous version works
-- [ ] All files are included
-
-**Sensors:**
-- [ ] All 15 AmeriGas sensors populate
-- [ ] All template sensors work
-- [ ] Utility meters create successfully
-- [ ] No "unavailable" sensors (except next_delivery if applicable)
-
-**Functionality:**
-- [ ] Login successful
-- [ ] Data updates correctly
-- [ ] Manual update works
-- [ ] Automatic updates work (wait 6+ hours or modify cron)
-
-**Error Handling:**
-- [ ] Wrong password handled gracefully
-- [ ] Network error handled
-- [ ] Missing data handled (doesn't crash)
-
-**Energy Dashboard:**
-- [ ] Gas source appears in picker
-- [ ] Data shows correctly
-- [ ] Cost tracking works (if enabled)
-
-**Logs:**
-- [ ] No Python errors
-- [ ] No template errors
-- [ ] Info messages appear
-- [ ] Warnings are appropriate
-
-### Test Environments
-
-**Minimum test:**
-- Home Assistant Core 2023.1+
-- Pyscript latest version
-- Fresh configuration
-
-**Ideal test:**
-- Multiple HA versions
-- Different account types (auto-pay, will-call)
-- With and without tank monitor
-
----
-
-## Documentation Guidelines
-
 ### README Updates
 
 When adding features, update:
 - Feature list
 - Sensor table
 - Configuration examples
-- Dashboard cards (if applicable)
-
-### Code Documentation
-
-**Inline comments** for complex logic:
-```python
-# AmeriGas returns dates in MM/DD/YY format
-# Convert to ISO format for HA timestamp sensors
-if '/' in date_string:
-    parsed = dt.strptime(date_string, '%m/%d/%y')
-```
-
-**Function docstrings** for all public functions:
-```python
-def safe_float(value, default=0.0):
-    """
-    Safely convert value to float.
-    
-    Args:
-        value: Value to convert (str, int, float, or None)
-        default: Default value if conversion fails
-        
-    Returns:
-        float: Converted value or default
-    """
-```
+- Dashboard examples
 
 ---
 
-## Review Process
+## Need Help?
 
-### What We Look For
+### Getting Started
 
-**✅ Good PRs:**
-- Clear description
-- Single purpose/feature
-- Well-tested
-- Documented
-- Follows coding standards
-- No breaking changes (or clearly documented)
+1. Check [README.md](README.md)
+2. Read existing code
+3. Look at closed PRs
+4. Ask in [Discussions](https://github.com/skircr115/ha-amerigas/discussions)
 
-**❌ PRs That Need Work:**
-- No description
-- Multiple unrelated changes
-- Breaks existing functionality
-- Missing documentation
-- Not tested
-- Style violations
+### Questions?
 
-### Timeline
-
-- We aim to review PRs within **1 week**
-- Complex changes may take longer
-- Questions/feedback will be provided
-- Multiple review rounds may be needed
-
-### Getting Your PR Merged
-
-1. **Address feedback** promptly
-2. **Keep PR updated** with main branch
-3. **Be patient** - quality over speed
-4. **Be responsive** to questions
-5. **Be respectful** in discussions
-
----
-
-## Community
-
-### Where to Ask Questions
-
-- 💬 [GitHub Discussions](https://github.com/skircr115/ha-amerigas/discussions) - General questions
-- 🐛 [GitHub Issues](https://github.com/skircr115/ha-amerigas/issues) - Bug reports
-- 🏠 [Home Assistant Forum](https://community.home-assistant.io/) - HA-specific questions
-
-### Getting Help
-
-**Stuck on something?**
-1. Check documentation
-2. Search existing issues
-3. Ask in Discussions
-4. Be patient - we're volunteers!
+- 💬 [GitHub Discussions](https://github.com/skircr115/ha-amerigas/discussions)
+- 🐛 [GitHub Issues](https://github.com/skircr115/ha-amerigas/issues)
+- 🏠 [Home Assistant Forum](https://community.home-assistant.io/)
 
 ---
 
 ## Recognition
-
-### Contributors
 
 All contributors will be:
 - Listed in CONTRIBUTORS.md
 - Mentioned in release notes
 - Appreciated in README
 
-### Hall of Fame
-
-Major contributors may be:
-- Given collaborator access
-- Invited to project discussions
-- Recognized in special thanks
-
 ---
 
 ## License
 
 By contributing, you agree that your contributions will be licensed under the MIT License.
-
----
-
-## Questions?
-
-Don't hesitate to ask! We're here to help.
-
-**Contact:**
-- Open a [Discussion](https://github.com/skircr115/ha-amerigas/discussions)
-- Comment on an existing [Issue](https://github.com/skircr115/ha-amerigas/issues)
-- Reach out to maintainers
 
 ---
 

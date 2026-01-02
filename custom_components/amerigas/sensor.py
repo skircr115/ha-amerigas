@@ -1,0 +1,895 @@
+"""Sensor platform for AmeriGas integration."""
+from __future__ import annotations
+
+from datetime import datetime, timedelta
+from typing import Any
+
+from homeassistant.components.sensor import (
+    SensorDeviceClass,
+    SensorEntity,
+    SensorStateClass,
+)
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import (
+    PERCENTAGE,
+    UnitOfEnergy,
+    UnitOfVolume,
+)
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.entity import EntityCategory
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.restore_state import RestoreEntity
+from homeassistant.helpers.update_coordinator import (
+    CoordinatorEntity,
+    DataUpdateCoordinator,
+)
+from homeassistant.util import dt as dt_util
+
+from .const import (
+    DOMAIN,
+    GALLONS_TO_CUBIC_FEET,
+    DEFAULT_FILL_PERCENTAGE,
+    DEFAULT_TANK_SIZE,
+    NOISE_THRESHOLD_GALLONS,
+)
+
+
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Set up AmeriGas sensors based on a config entry."""
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    
+    # Base sensors from API
+    sensors: list[SensorEntity] = [
+        AmeriGasTankLevelSensor(coordinator),
+        AmeriGasTankSizeSensor(coordinator),
+        AmeriGasDaysRemainingSensor(coordinator),
+        AmeriGasAmountDueSensor(coordinator),
+        AmeriGasAccountBalanceSensor(coordinator),
+        AmeriGasLastPaymentDateSensor(coordinator),
+        AmeriGasLastPaymentAmountSensor(coordinator),
+        AmeriGasLastTankReadingSensor(coordinator),
+        AmeriGasLastDeliveryDateSensor(coordinator),
+        AmeriGasLastDeliveryGallonsSensor(coordinator),
+        AmeriGasNextDeliveryDateSensor(coordinator),
+        AmeriGasAutoPaySensor(coordinator),
+        AmeriGasPaperlessSensor(coordinator),
+        AmeriGasAccountNumberSensor(coordinator),
+        AmeriGasServiceAddressSensor(coordinator),
+    ]
+    
+    # Calculated sensors
+    sensors.extend([
+        PropaneGallonsRemainingSensor(coordinator),
+        PropaneUsedSinceDeliverySensor(coordinator),
+        PropaneEnergyConsumptionSensor(coordinator),
+        PropaneDailyAverageUsageSensor(coordinator),
+        PropaneDaysUntilEmptySensor(coordinator),
+        PropaneCostPerGallonSensor(coordinator),
+        PropaneCostPerCubicFootSensor(coordinator),
+        PropaneCostSinceDeliverySensor(coordinator),
+        PropaneEstimatedRefillCostSensor(coordinator),
+        PropaneDaysSinceDeliverySensor(coordinator),
+        PropaneDaysRemainingDifferenceSensor(coordinator),
+    ])
+    
+    # Lifetime tracking sensors (v2.0.0+)
+    sensors.extend([
+        PropaneLifetimeGallonsSensor(coordinator, hass),
+        PropaneLifetimeEnergySensor(coordinator, hass),
+    ])
+    
+    async_add_entities(sensors)
+
+
+class AmeriGasSensorBase(CoordinatorEntity, SensorEntity):
+    """Base class for AmeriGas sensors."""
+    
+    _attr_has_entity_name = True
+    
+    def __init__(self, coordinator: DataUpdateCoordinator) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator)
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, "propane_tank")},
+            "name": "Propane Tank",
+            "manufacturer": "AmeriGas",
+            "model": "AmeriGas Account",
+        }
+
+
+# =============================================================================
+# BASE SENSORS FROM API
+# =============================================================================
+
+class AmeriGasTankLevelSensor(AmeriGasSensorBase):
+    """Tank level percentage sensor."""
+    
+    _attr_name = "Tank Level"
+    _attr_unique_id = "amerigas_tank_level"
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:propane-tank"
+    
+    @property
+    def native_value(self) -> int | None:
+        """Return tank level percentage."""
+        return self.coordinator.data.get("tank_level")
+    
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return extra attributes."""
+        return {
+            "tank_monitor": self.coordinator.data.get("tank_monitor"),
+            "delivery_type": self.coordinator.data.get("delivery_type"),
+        }
+
+
+class AmeriGasTankSizeSensor(AmeriGasSensorBase):
+    """Tank size sensor."""
+    
+    _attr_name = "Tank Size"
+    _attr_unique_id = "amerigas_tank_size"
+    _attr_native_unit_of_measurement = UnitOfVolume.GALLONS
+    _attr_device_class = SensorDeviceClass.VOLUME_STORAGE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:propane-tank-outline"
+    
+    @property
+    def native_value(self) -> int | None:
+        """Return tank size."""
+        return self.coordinator.data.get("tank_size")
+
+
+class AmeriGasDaysRemainingSensor(AmeriGasSensorBase):
+    """Days remaining sensor (AmeriGas estimate)."""
+    
+    _attr_name = "Days Remaining (AmeriGas)"
+    _attr_unique_id = "amerigas_days_remaining"
+    _attr_native_unit_of_measurement = "days"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:calendar-clock"
+    
+    @property
+    def native_value(self) -> int | None:
+        """Return days remaining."""
+        return self.coordinator.data.get("days_remaining")
+
+
+class AmeriGasAmountDueSensor(AmeriGasSensorBase):
+    """Amount due sensor."""
+    
+    _attr_name = "Amount Due"
+    _attr_unique_id = "amerigas_amount_due"
+    _attr_native_unit_of_measurement = "USD"
+    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_state_class = SensorStateClass.TOTAL
+    _attr_icon = "mdi:currency-usd"
+    
+    @property
+    def native_value(self) -> float | None:
+        """Return amount due."""
+        return self.coordinator.data.get("amount_due")
+    
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return extra attributes."""
+        return {
+            "payment_terms": self.coordinator.data.get("payment_terms"),
+        }
+
+
+class AmeriGasAccountBalanceSensor(AmeriGasSensorBase):
+    """Account balance sensor."""
+    
+    _attr_name = "Account Balance"
+    _attr_unique_id = "amerigas_account_balance"
+    _attr_native_unit_of_measurement = "USD"
+    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_state_class = SensorStateClass.TOTAL
+    _attr_icon = "mdi:cash"
+    
+    @property
+    def native_value(self) -> float | None:
+        """Return account balance."""
+        return self.coordinator.data.get("account_balance")
+
+
+class AmeriGasLastPaymentDateSensor(AmeriGasSensorBase):
+    """Last payment date sensor."""
+    
+    _attr_name = "Last Payment Date"
+    _attr_unique_id = "amerigas_last_payment_date"
+    _attr_icon = "mdi:calendar-check"
+    
+    @property
+    def native_value(self) -> str | None:
+        """Return last payment date."""
+        return self.coordinator.data.get("last_payment_date")
+
+
+class AmeriGasLastPaymentAmountSensor(AmeriGasSensorBase):
+    """Last payment amount sensor."""
+    
+    _attr_name = "Last Payment Amount"
+    _attr_unique_id = "amerigas_last_payment_amount"
+    _attr_native_unit_of_measurement = "USD"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:credit-card"
+    
+    @property
+    def native_value(self) -> float | None:
+        """Return last payment amount."""
+        return self.coordinator.data.get("last_payment_amount")
+
+
+class AmeriGasLastTankReadingSensor(AmeriGasSensorBase):
+    """Last tank reading timestamp sensor."""
+    
+    _attr_name = "Last Tank Reading"
+    _attr_unique_id = "amerigas_last_tank_reading"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_icon = "mdi:clock-outline"
+    
+    @property
+    def native_value(self) -> datetime | None:
+        """Return last tank reading timestamp."""
+        return self.coordinator.data.get("last_tank_reading")
+
+
+class AmeriGasLastDeliveryDateSensor(AmeriGasSensorBase):
+    """Last delivery date sensor."""
+    
+    _attr_name = "Last Delivery Date"
+    _attr_unique_id = "amerigas_last_delivery_date"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_icon = "mdi:truck-delivery"
+    
+    @property
+    def native_value(self) -> datetime | None:
+        """Return last delivery date."""
+        return self.coordinator.data.get("last_delivery_date")
+
+
+class AmeriGasLastDeliveryGallonsSensor(AmeriGasSensorBase):
+    """Last delivery gallons sensor."""
+    
+    _attr_name = "Last Delivery Gallons"
+    _attr_unique_id = "amerigas_last_delivery_gallons"
+    _attr_native_unit_of_measurement = UnitOfVolume.GALLONS
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:gas-station"
+    
+    @property
+    def native_value(self) -> float | None:
+        """Return last delivery gallons."""
+        return self.coordinator.data.get("last_delivery_gallons")
+
+
+class AmeriGasNextDeliveryDateSensor(AmeriGasSensorBase):
+    """Next delivery date sensor."""
+    
+    _attr_name = "Next Delivery Date"
+    _attr_unique_id = "amerigas_next_delivery_date"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_icon = "mdi:truck-delivery"
+    
+    @property
+    def native_value(self) -> datetime | None:
+        """Return next delivery date."""
+        return self.coordinator.data.get("next_delivery_date")
+    
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return extra attributes."""
+        next_date = self.coordinator.data.get("next_delivery_date")
+        return {
+            "has_scheduled_delivery": next_date is not None,
+        }
+
+
+class AmeriGasAutoPaySensor(AmeriGasSensorBase):
+    """Auto pay status sensor."""
+    
+    _attr_name = "Auto Pay"
+    _attr_unique_id = "amerigas_auto_pay"
+    _attr_icon = "mdi:credit-card-check"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    
+    @property
+    def native_value(self) -> str | None:
+        """Return auto pay status."""
+        return self.coordinator.data.get("auto_pay")
+
+
+class AmeriGasPaperlessSensor(AmeriGasSensorBase):
+    """Paperless billing status sensor."""
+    
+    _attr_name = "Paperless Billing"
+    _attr_unique_id = "amerigas_paperless"
+    _attr_icon = "mdi:file-document"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    
+    @property
+    def native_value(self) -> str | None:
+        """Return paperless billing status."""
+        return self.coordinator.data.get("paperless")
+
+
+class AmeriGasAccountNumberSensor(AmeriGasSensorBase):
+    """Account number sensor."""
+    
+    _attr_name = "Account Number"
+    _attr_unique_id = "amerigas_account_number"
+    _attr_icon = "mdi:account"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    
+    @property
+    def native_value(self) -> str | None:
+        """Return account number."""
+        return self.coordinator.data.get("account_number")
+
+
+class AmeriGasServiceAddressSensor(AmeriGasSensorBase):
+    """Service address sensor."""
+    
+    _attr_name = "Service Address"
+    _attr_unique_id = "amerigas_service_address"
+    _attr_icon = "mdi:home-map-marker"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    
+    @property
+    def native_value(self) -> str | None:
+        """Return service address."""
+        return self.coordinator.data.get("service_address")
+    
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return extra attributes."""
+        return {
+            "street": self.coordinator.data.get("street"),
+            "city": self.coordinator.data.get("city"),
+            "state": self.coordinator.data.get("state"),
+            "zip": self.coordinator.data.get("zip"),
+        }
+
+
+# =============================================================================
+# CALCULATED SENSORS
+# =============================================================================
+
+class PropaneGallonsRemainingSensor(AmeriGasSensorBase):
+    """Gallons remaining sensor with v2.0.1 bounds checking."""
+    
+    _attr_name = "Gallons Remaining"
+    _attr_unique_id = "propane_tank_gallons_remaining"
+    _attr_native_unit_of_measurement = UnitOfVolume.GALLONS
+    _attr_device_class = SensorDeviceClass.VOLUME_STORAGE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    
+    @property
+    def native_value(self) -> float | None:
+        """Return gallons remaining with bounds checking."""
+        tank_size = self.coordinator.data.get("tank_size") or DEFAULT_TANK_SIZE
+        percent = self.coordinator.data.get("tank_level") or 0
+        
+        # v2.0.1: Bounds check - clamp to 0-100%
+        if percent < 0:
+            percent = 0
+        elif percent > 100:
+            percent = 100
+        
+        return round(tank_size * (percent / 100), 2)
+    
+    @property
+    def available(self) -> bool:
+        """Return if sensor is available."""
+        # v2.0.1: Require valid tank size
+        tank_size = self.coordinator.data.get("tank_size")
+        return tank_size is not None and tank_size > 0
+
+
+class PropaneUsedSinceDeliverySensor(AmeriGasSensorBase):
+    """Used since delivery sensor with v2.1.0 improvements."""
+    
+    _attr_name = "Used Since Last Delivery"
+    _attr_unique_id = "propane_used_since_last_delivery"
+    _attr_native_unit_of_measurement = UnitOfVolume.GALLONS
+    _attr_state_class = SensorStateClass.TOTAL
+    _attr_icon = "mdi:gas-station"
+    
+    @property
+    def native_value(self) -> float | None:
+        """Return gallons used with improved calculation."""
+        tank_size = self.coordinator.data.get("tank_size") or DEFAULT_TANK_SIZE
+        tank_level = self.coordinator.data.get("tank_level") or 0
+        
+        # Bounds check
+        if tank_level < 0:
+            tank_level = 0
+        elif tank_level > 100:
+            tank_level = 100
+        
+        current = tank_size * (tank_level / 100)
+        last_delivery = self.coordinator.data.get("last_delivery_gallons") or 0
+        
+        # v2.1.0: Use actual delivery amount when available
+        if last_delivery > 0:
+            # Estimate tank was at ~20% before delivery
+            estimated_before = tank_size * 0.20
+            starting_level = estimated_before + last_delivery
+            
+            # Cap at tank capacity
+            if starting_level > tank_size:
+                starting_level = tank_size
+            
+            used = starting_level - current
+        else:
+            # Fallback: assume 80% fill
+            full_fill_level = tank_size * DEFAULT_FILL_PERCENTAGE
+            used = full_fill_level - current
+        
+        # If negative (overfill/heat), show 0
+        return max(0, round(used, 2))
+    
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return extra attributes."""
+        last_delivery = self.coordinator.data.get("last_delivery_gallons") or 0
+        return {
+            "calculation_method": "actual_delivery" if last_delivery > 0 else "assumed_80_percent",
+            "last_delivery_gallons": last_delivery,
+        }
+
+
+class PropaneEnergyConsumptionSensor(AmeriGasSensorBase):
+    """Energy consumption sensor (display only, not for Energy Dashboard)."""
+    
+    _attr_name = "Energy Consumption (Display)"
+    _attr_unique_id = "propane_energy_consumption"
+    _attr_native_unit_of_measurement = "ft³"
+    _attr_device_class = SensorDeviceClass.GAS
+    _attr_state_class = SensorStateClass.TOTAL
+    _attr_icon = "mdi:fire"
+    
+    @property
+    def native_value(self) -> float | None:
+        """Return energy in cubic feet."""
+        # Get from UsedSinceDelivery sensor
+        used_sensor = self.hass.states.get("sensor.propane_used_since_last_delivery")
+        if used_sensor and used_sensor.state not in ("unknown", "unavailable"):
+            gallons = float(used_sensor.state)
+            return round(gallons * GALLONS_TO_CUBIC_FEET, 2)
+        return None
+
+
+class PropaneDailyAverageUsageSensor(AmeriGasSensorBase):
+    """Daily average usage sensor with v2.1.0 improvements."""
+    
+    _attr_name = "Daily Average Usage"
+    _attr_unique_id = "propane_daily_average_usage"
+    _attr_native_unit_of_measurement = "gal/day"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:chart-line"
+    
+    @property
+    def native_value(self) -> float | None:
+        """Return daily average usage."""
+        last_date = self.coordinator.data.get("last_delivery_date")
+        
+        if not last_date:
+            return None
+        
+        # Get used amount
+        used_sensor = self.hass.states.get("sensor.propane_used_since_last_delivery")
+        if not used_sensor or used_sensor.state in ("unknown", "unavailable"):
+            return None
+        
+        used = float(used_sensor.state)
+        
+        # Calculate days since delivery
+        now = dt_util.now()
+        days = (now - last_date).days
+        
+        # v2.1.0: Return None instead of 0 on same day as delivery
+        if days <= 0:
+            return None
+        
+        return round(used / days, 2)
+    
+    @property
+    def available(self) -> bool:
+        """Return availability."""
+        last_date = self.coordinator.data.get("last_delivery_date")
+        if not last_date:
+            return False
+        
+        now = dt_util.now()
+        days = (now - last_date).days
+        return days > 0
+
+
+class PropaneDaysUntilEmptySensor(AmeriGasSensorBase):
+    """Days until empty sensor with v2.1.0 improvements."""
+    
+    _attr_name = "Days Until Empty"
+    _attr_unique_id = "propane_days_until_empty"
+    _attr_native_unit_of_measurement = "days"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:calendar-clock"
+    
+    @property
+    def native_value(self) -> int | None:
+        """Return days until empty."""
+        # Get remaining gallons
+        remaining_sensor = self.hass.states.get("sensor.propane_gallons_remaining")
+        if not remaining_sensor or remaining_sensor.state in ("unknown", "unavailable"):
+            return None
+        
+        # Get daily usage
+        usage_sensor = self.hass.states.get("sensor.propane_daily_average_usage")
+        if not usage_sensor or usage_sensor.state in ("unknown", "unavailable"):
+            return None
+        
+        remaining = float(remaining_sensor.state)
+        avg_usage = float(usage_sensor.state)
+        
+        # v2.1.0: Return None instead of 999
+        if remaining <= 0 or avg_usage <= 0.1:
+            return None
+        
+        return round(remaining / avg_usage)
+    
+    @property
+    def available(self) -> bool:
+        """Return availability."""
+        remaining_sensor = self.hass.states.get("sensor.propane_gallons_remaining")
+        usage_sensor = self.hass.states.get("sensor.propane_daily_average_usage")
+        
+        if not remaining_sensor or not usage_sensor:
+            return False
+        
+        if remaining_sensor.state in ("unknown", "unavailable"):
+            return False
+        if usage_sensor.state in ("unknown", "unavailable"):
+            return False
+        
+        remaining = float(remaining_sensor.state)
+        avg_usage = float(usage_sensor.state)
+        
+        return remaining > 0 and avg_usage > 0.1
+
+
+class PropaneCostPerGallonSensor(AmeriGasSensorBase):
+    """Cost per gallon sensor with v2.1.0 improvements."""
+    
+    _attr_name = "Cost Per Gallon"
+    _attr_unique_id = "propane_cost_per_gallon"
+    _attr_native_unit_of_measurement = "USD/gal"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:currency-usd"
+    
+    @property
+    def native_value(self) -> float | None:
+        """Return cost per gallon."""
+        payment = self.coordinator.data.get("last_payment_amount") or 0
+        delivery = self.coordinator.data.get("last_delivery_gallons") or 0
+        
+        # v2.1.0: Return None instead of 0
+        if delivery <= 0:
+            return None
+        
+        return round(payment / delivery, 2)
+    
+    @property
+    def available(self) -> bool:
+        """Return availability."""
+        payment = self.coordinator.data.get("last_payment_amount") or 0
+        delivery = self.coordinator.data.get("last_delivery_gallons") or 0
+        return delivery > 0
+
+
+class PropaneCostPerCubicFootSensor(AmeriGasSensorBase):
+    """Cost per cubic foot sensor."""
+    
+    _attr_name = "Cost Per Cubic Foot"
+    _attr_unique_id = "propane_cost_per_cubic_foot"
+    _attr_native_unit_of_measurement = "USD/ft³"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:currency-usd"
+    
+    @property
+    def native_value(self) -> float | None:
+        """Return cost per cubic foot."""
+        cost_gal_sensor = self.hass.states.get("sensor.propane_cost_per_gallon")
+        if not cost_gal_sensor or cost_gal_sensor.state in ("unknown", "unavailable"):
+            return None
+        
+        cost_gal = float(cost_gal_sensor.state)
+        if cost_gal <= 0:
+            return None
+        
+        return round(cost_gal / GALLONS_TO_CUBIC_FEET, 4)
+
+
+class PropaneCostSinceDeliverySensor(AmeriGasSensorBase):
+    """Cost since delivery sensor."""
+    
+    _attr_name = "Cost Since Last Delivery"
+    _attr_unique_id = "propane_cost_since_last_delivery"
+    _attr_native_unit_of_measurement = "USD"
+    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_state_class = SensorStateClass.TOTAL
+    _attr_icon = "mdi:cash"
+    
+    @property
+    def native_value(self) -> float | None:
+        """Return cost since delivery."""
+        used_sensor = self.hass.states.get("sensor.propane_used_since_last_delivery")
+        cost_sensor = self.hass.states.get("sensor.propane_cost_per_gallon")
+        
+        if not used_sensor or not cost_sensor:
+            return None
+        
+        if used_sensor.state in ("unknown", "unavailable") or cost_sensor.state in ("unknown", "unavailable"):
+            return None
+        
+        used = float(used_sensor.state)
+        cost = float(cost_sensor.state)
+        
+        return round(used * cost, 2)
+
+
+class PropaneEstimatedRefillCostSensor(AmeriGasSensorBase):
+    """Estimated refill cost sensor."""
+    
+    _attr_name = "Estimated Refill Cost"
+    _attr_unique_id = "propane_estimated_refill_cost"
+    _attr_native_unit_of_measurement = "USD"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:cash-multiple"
+    
+    @property
+    def native_value(self) -> float | None:
+        """Return estimated refill cost."""
+        tank_size = self.coordinator.data.get("tank_size") or DEFAULT_TANK_SIZE
+        
+        remaining_sensor = self.hass.states.get("sensor.propane_gallons_remaining")
+        cost_sensor = self.hass.states.get("sensor.propane_cost_per_gallon")
+        
+        if not remaining_sensor or not cost_sensor:
+            return None
+        
+        if remaining_sensor.state in ("unknown", "unavailable") or cost_sensor.state in ("unknown", "unavailable"):
+            return None
+        
+        remaining = float(remaining_sensor.state)
+        cost = float(cost_sensor.state)
+        
+        needed = tank_size - remaining
+        
+        # Bounds check
+        if needed < 0:
+            needed = 0
+        elif needed > tank_size:
+            needed = tank_size
+        
+        return round(needed * cost, 2)
+
+
+class PropaneDaysSinceDeliverySensor(AmeriGasSensorBase):
+    """Days since delivery sensor."""
+    
+    _attr_name = "Days Since Last Delivery"
+    _attr_unique_id = "propane_days_since_last_delivery"
+    _attr_native_unit_of_measurement = "days"
+    _attr_icon = "mdi:calendar"
+    
+    @property
+    def native_value(self) -> int | None:
+        """Return days since delivery."""
+        last_date = self.coordinator.data.get("last_delivery_date")
+        
+        if not last_date:
+            return None
+        
+        now = dt_util.now()
+        return (now - last_date).days
+    
+    @property
+    def available(self) -> bool:
+        """Return availability."""
+        return self.coordinator.data.get("last_delivery_date") is not None
+
+
+class PropaneDaysRemainingDifferenceSensor(AmeriGasSensorBase):
+    """Days remaining difference sensor."""
+    
+    _attr_name = "Days Remaining Difference"
+    _attr_unique_id = "propane_days_remaining_difference"
+    _attr_native_unit_of_measurement = "days"
+    _attr_icon = "mdi:compare"
+    
+    @property
+    def native_value(self) -> int | None:
+        """Return difference in estimates."""
+        amerigas = self.coordinator.data.get("days_remaining") or 0
+        
+        mine_sensor = self.hass.states.get("sensor.propane_days_until_empty")
+        if not mine_sensor or mine_sensor.state in ("unknown", "unavailable"):
+            return None
+        
+        mine = int(mine_sensor.state)
+        
+        return mine - amerigas
+    
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return extra attributes."""
+        mine_sensor = self.hass.states.get("sensor.propane_days_until_empty")
+        mine = int(mine_sensor.state) if mine_sensor and mine_sensor.state not in ("unknown", "unavailable") else None
+        
+        return {
+            "amerigas_estimate": self.coordinator.data.get("days_remaining"),
+            "your_estimate": mine,
+        }
+
+
+# =============================================================================
+# LIFETIME TRACKING SENSORS (v2.0.0+ with v2.1.0 enhancements)
+# =============================================================================
+
+class PropaneLifetimeGallonsSensor(AmeriGasSensorBase, RestoreEntity):
+    """Lifetime gallons sensor with v2.1.0 enhancements."""
+    
+    _attr_name = "Lifetime Gallons"
+    _attr_unique_id = "propane_lifetime_gallons"
+    _attr_native_unit_of_measurement = UnitOfVolume.GALLONS
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_icon = "mdi:gas-station"
+    
+    def __init__(self, coordinator: DataUpdateCoordinator, hass: HomeAssistant) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator)
+        self._previous_gallons: float | None = None
+        self._lifetime_total: float = 0.0
+        self._last_consumption_event: datetime | None = None
+        self._total_triggers: int = 0
+        self._ignored_triggers: int = 0
+        self._largest_consumption: float = 0.0
+    
+    async def async_added_to_hass(self) -> None:
+        """Restore state when added to hass."""
+        await super().async_added_to_hass()
+        
+        # Restore previous state
+        if (last_state := await self.async_get_last_state()) is not None:
+            try:
+                self._lifetime_total = float(last_state.state)
+                
+                # v2.1.0: Restore diagnostic attributes
+                if last_state.attributes:
+                    self._last_consumption_event = last_state.attributes.get("last_consumption_event")
+                    self._total_triggers = last_state.attributes.get("total_triggers", 0)
+                    self._ignored_triggers = last_state.attributes.get("ignored_triggers", 0)
+                    self._largest_consumption = last_state.attributes.get("largest_consumption", 0.0)
+                    # v2.1.0: State preservation backup
+                    if "last_valid_state" in last_state.attributes:
+                        backup = last_state.attributes.get("last_valid_state")
+                        if backup and self._lifetime_total == 0:
+                            self._lifetime_total = float(backup)
+            except (ValueError, TypeError):
+                self._lifetime_total = 0.0
+        
+        # Set up listener for gallons remaining changes
+        self.async_on_remove(
+            self.coordinator.async_add_listener(self._handle_coordinator_update)
+        )
+    
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        # Get current gallons remaining
+        remaining_sensor = self.hass.states.get("sensor.propane_gallons_remaining")
+        if not remaining_sensor or remaining_sensor.state in ("unknown", "unavailable"):
+            self.async_write_ha_state()
+            return
+        
+        current_gallons = float(remaining_sensor.state)
+        
+        # First run - just store current value
+        if self._previous_gallons is None:
+            self._previous_gallons = current_gallons
+            self.async_write_ha_state()
+            return
+        
+        # Calculate difference
+        diff = self._previous_gallons - current_gallons
+        
+        # v2.1.0: Increment total triggers
+        self._total_triggers += 1
+        
+        # v2.0.1: Noise filter - only track if > threshold
+        if diff > NOISE_THRESHOLD_GALLONS:
+            # Consumption occurred
+            self._lifetime_total += diff
+            self._previous_gallons = current_gallons
+            
+            # v2.1.0: Update diagnostic attributes
+            self._last_consumption_event = dt_util.now()
+            if diff > self._largest_consumption:
+                self._largest_consumption = diff
+        elif diff > 0:
+            # v2.1.0: Small change filtered as noise
+            self._ignored_triggers += 1
+            # Don't update previous_gallons - wait for larger change
+        else:
+            # Level went up (delivery or thermal expansion)
+            # Update previous but don't add to lifetime
+            self._previous_gallons = current_gallons
+        
+        self.async_write_ha_state()
+    
+    @property
+    def native_value(self) -> float:
+        """Return lifetime gallons."""
+        return round(self._lifetime_total, 2)
+    
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return extra attributes (v2.1.0 enhancements)."""
+        return {
+            # v2.1.0: State preservation backup
+            "last_valid_state": self._lifetime_total,
+            # v2.1.0: Diagnostic attributes
+            "last_consumption_event": self._last_consumption_event.isoformat() if self._last_consumption_event else "never",
+            "total_triggers": self._total_triggers,
+            "ignored_triggers": self._ignored_triggers,
+            "largest_consumption": round(self._largest_consumption, 2),
+            "threshold_gallons": NOISE_THRESHOLD_GALLONS,
+            "version": "2.1.0",
+        }
+
+
+class PropaneLifetimeEnergySensor(AmeriGasSensorBase):
+    """Lifetime energy sensor for Energy Dashboard."""
+    
+    _attr_name = "Lifetime Energy"
+    _attr_unique_id = "propane_lifetime_energy"
+    _attr_native_unit_of_measurement = "ft³"
+    _attr_device_class = SensorDeviceClass.GAS
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_icon = "mdi:fire"
+    
+    def __init__(self, coordinator: DataUpdateCoordinator, hass: HomeAssistant) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator)
+        self._hass = hass
+    
+    @property
+    def native_value(self) -> float | None:
+        """Return lifetime energy in cubic feet."""
+        gallons_sensor = self.hass.states.get("sensor.propane_lifetime_gallons")
+        if not gallons_sensor or gallons_sensor.state in ("unknown", "unavailable"):
+            return None
+        
+        gallons = float(gallons_sensor.state)
+        return round(gallons * GALLONS_TO_CUBIC_FEET, 2)
+    
+    @property
+    def available(self) -> bool:
+        """Return availability."""
+        gallons_sensor = self.hass.states.get("sensor.propane_lifetime_gallons")
+        return gallons_sensor is not None and gallons_sensor.state not in ("unknown", "unavailable")
+    
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return extra attributes."""
+        return {
+            "source_sensor": "sensor.propane_lifetime_gallons",
+            "conversion_factor": GALLONS_TO_CUBIC_FEET,
+            "version": "2.1.0",
+        }

@@ -28,7 +28,7 @@ Contributors who have improved documentation:
 
 Contributors who have reported bugs and issues:
 
-- **[Contributor Name]** - [@username](https://github.com/username)
+- **Ricket** - [@Ricket](https://github.com/Ricket)
 - **[Contributor Name]** - [@username](https://github.com/username)
 
 ### Community Support
