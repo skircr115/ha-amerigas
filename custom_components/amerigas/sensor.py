@@ -772,7 +772,17 @@ class PropaneLifetimeGallonsSensor(AmeriGasSensorBase, RestoreEntity):
                 
                 # v2.1.0: Restore diagnostic attributes
                 if last_state.attributes:
-                    self._last_consumption_event = last_state.attributes.get("last_consumption_event")
+                    # Parse last_consumption_event back to datetime if it's a string
+                    last_event = last_state.attributes.get("last_consumption_event")
+                    if last_event and last_event != "never":
+                        try:
+                            # Parse ISO format string back to datetime
+                            self._last_consumption_event = datetime.fromisoformat(last_event)
+                        except (ValueError, TypeError):
+                            self._last_consumption_event = None
+                    else:
+                        self._last_consumption_event = None
+                    
                     self._total_triggers = last_state.attributes.get("total_triggers", 0)
                     self._ignored_triggers = last_state.attributes.get("ignored_triggers", 0)
                     self._largest_consumption = last_state.attributes.get("largest_consumption", 0.0)
@@ -841,16 +851,25 @@ class PropaneLifetimeGallonsSensor(AmeriGasSensorBase, RestoreEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return extra attributes (v2.1.0 enhancements)."""
+        # Handle last_consumption_event - could be datetime or string
+        if self._last_consumption_event is None:
+            last_event = "never"
+        elif isinstance(self._last_consumption_event, str):
+            last_event = self._last_consumption_event
+        else:
+            # It's a datetime object
+            last_event = self._last_consumption_event.isoformat()
+        
         return {
             # v2.1.0: State preservation backup
             "last_valid_state": self._lifetime_total,
             # v2.1.0: Diagnostic attributes
-            "last_consumption_event": self._last_consumption_event.isoformat() if self._last_consumption_event else "never",
+            "last_consumption_event": last_event,
             "total_triggers": self._total_triggers,
             "ignored_triggers": self._ignored_triggers,
             "largest_consumption": round(self._largest_consumption, 2),
             "threshold_gallons": NOISE_THRESHOLD_GALLONS,
-            "version": "2.1.0",
+            "version": "3.0.1",
         }
 
 

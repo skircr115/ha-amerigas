@@ -5,35 +5,62 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.0.1] - 2025-01-02
-### 🐛 Critical Hotfix - Timezone Issues
-**HOTFIX**: Addresses critical timezone-aware datetime requirement that prevented sensors from loading.
+## [3.0.2] - 2025-01-02
+
+### 🐛 Hotfix - Lifetime Sensor State Restoration
+
+**HOTFIX:** Fixes AttributeError in lifetime gallons sensor when restoring state from previous session.
 
 ### Fixed
-
-CRITICAL: All datetime values now return timezone-aware objects (required by Home Assistant)
-ValueError: Invalid datetime ... missing timezone information errors eliminated
-TypeError: can't subtract offset-naive and offset-aware datetimes errors resolved
-Fixed 4 sensors that failed to load:
-
-sensor.propane_tank_last_tank_reading
-sensor.propane_tank_last_delivery_date
-sensor.propane_tank_daily_average_usage
-sensor.propane_tank_days_since_last_delivery
-
-
+- **CRITICAL:** `AttributeError: 'str' object has no attribute 'isoformat'` in lifetime gallons sensor
+- State restoration now properly parses `last_consumption_event` from ISO string to datetime
+- Extra state attributes now handle both datetime objects and strings defensively
 
 ### Changed
+- Enhanced `async_added_to_hass()` in `PropaneLifetimeGallonsSensor` to parse datetime attributes
+- Made `extra_state_attributes` more defensive with type checking
+- Updated version attribute to "3.0.2"
 
-Enhanced parse_date() function in api.py to ensure all parsed dates are timezone-aware
-All dates without explicit timezone now default to UTC (standard for AmeriGas data)
-Added timezone import from datetime module
-Added dt_util import from homeassistant.util
+### Technical Details
+When Home Assistant restarts, the lifetime sensor's diagnostic attribute `last_consumption_event` 
+is restored as a string (ISO format) from the state machine. The code was attempting to call 
+`.isoformat()` on this string, causing an AttributeError. Now properly parses the string back 
+to a datetime object during restoration.
+
+**Impact:** MEDIUM - Lifetime sensor would fail to load after Home Assistant restart  
+**Affected:** Users upgrading from v3.0.0 or v3.0.1 with existing lifetime sensor state
+
+---
+
+## [3.0.1] - 2025-01-02
+
+### 🐛 Critical Hotfix - Timezone Issues
+
+**HOTFIX:** Addresses critical timezone-aware datetime requirement that prevented sensors from loading.
+
+### Fixed
+- **CRITICAL:** All datetime values now return timezone-aware objects (required by Home Assistant)
+- `ValueError: Invalid datetime ... missing timezone information` errors eliminated
+- `TypeError: can't subtract offset-naive and offset-aware datetimes` errors resolved
+- Fixed 4 sensors that failed to load:
+  - `sensor.propane_tank_last_tank_reading`
+  - `sensor.propane_tank_last_delivery_date`
+  - `sensor.propane_tank_daily_average_usage`
+  - `sensor.propane_tank_days_since_last_delivery`
+
+### Changed
+- Enhanced `parse_date()` function in `api.py` to ensure all parsed dates are timezone-aware
+- All dates without explicit timezone now default to UTC (standard for AmeriGas data)
+- Added `timezone` import from datetime module
+- Added `dt_util` import from homeassistant.util
 
 ### Technical Details
 The integration was returning timezone-naive datetime objects from the API, but Home Assistant Core requires all datetime sensor values to include timezone information. Updated the date parsing logic to automatically add UTC timezone to any dates that don't specify one.
-Impact: HIGH - Integration would not load properly in v3.0.0
-Recommendation: All v3.0.0 users should upgrade immediately
+
+**Impact:** HIGH - Integration would not load properly in v3.0.0  
+**Recommendation:** All v3.0.0 users should upgrade immediately
+
+---
 
 ## [3.0.0] - 2025-01-02
 
