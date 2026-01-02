@@ -463,7 +463,7 @@ A: Check Troubleshooting section or open an issue on GitHub.
 | **Dependencies** | Pyscript required | None |
 | **Error Messages** | Basic | Detailed |
 | **Diagnostics** | Limited | Full |
-| **Version** | v2.0.0 | v2.1.0 |
+| **Version** | v2.0.0 | v3.0.4 |
 | **Accuracy** | 95-98% | 98-99% |
 
 **Migration is worth it!** ✅
