@@ -1,8 +1,11 @@
 """Sensor platform for AmeriGas integration."""
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta
 from typing import Any
+
+_LOGGER = logging.getLogger(__name__)
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
