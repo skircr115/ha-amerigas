@@ -142,8 +142,8 @@ class PreDeliveryLevelNumber(NumberEntity, RestoreEntity):
     accurate consumption tracking regardless of delivery size.
     """
     
-    _attr_has_entity_name = True
-    _attr_name = "Pre-Delivery Tank Level"
+    _attr_has_entity_name = False  # Use explicit name for predictable entity_id
+    _attr_name = "AmeriGas Pre-Delivery Level"  # Generates: number.amerigas_pre_delivery_level
     _attr_icon = "mdi:gauge-empty"
     _attr_native_unit_of_measurement = UnitOfVolume.GALLONS
     _attr_mode = NumberMode.BOX
