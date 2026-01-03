@@ -71,23 +71,42 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         """Handle the set_pre_delivery_level service call."""
         gallons = call.data[ATTR_GALLONS]
         
-        # Update the number entity
-        number_entity_id = f"number.{DOMAIN}_pre_delivery_level"
-        
-        await hass.services.async_call(
-            "number",
-            "set_value",
-            {
-                "entity_id": number_entity_id,
-                "value": gallons,
-            },
-            blocking=True,
-        )
-        
-        _LOGGER.info(
-            "Manual pre-delivery level set to %.1f gallons via service call",
-            gallons,
-        )
+        # Find the number entity using entity registry (handles dynamic naming)
+        try:
+            from homeassistant.helpers import entity_registry as er
+            
+            entity_reg = er.async_get(hass)
+            
+            # Find the pre-delivery level number entity by unique_id
+            target_entity_id = None
+            for entity in entity_reg.entities.values():
+                if entity.unique_id and entity.unique_id.endswith("_pre_delivery_level"):
+                    if entity.platform == DOMAIN:
+                        target_entity_id = entity.entity_id
+                        break
+            
+            if not target_entity_id:
+                _LOGGER.error("Could not find pre-delivery level number entity")
+                return
+            
+            # Update the number entity
+            await hass.services.async_call(
+                "number",
+                "set_value",
+                {
+                    "entity_id": target_entity_id,
+                    "value": gallons,
+                },
+                blocking=True,
+            )
+            
+            _LOGGER.info(
+                "Manual pre-delivery level set to %.1f gallons via service call (entity: %s)",
+                gallons,
+                target_entity_id,
+            )
+        except Exception as e:
+            _LOGGER.error(f"Error setting pre-delivery level: {e}")
     
     # Register the service (only once for the domain)
     if not hass.services.has_service(DOMAIN, SERVICE_SET_PRE_DELIVERY_LEVEL):

@@ -497,15 +497,30 @@ class PropaneUsedSinceDeliverySensor(AmeriGasSensorBase):
         current = tank_size * (tank_level / 100)
         last_delivery = self.coordinator.data.get("last_delivery_gallons") or 0
         
-        # v3.0.5: Check for AUTO-CAPTURED pre-delivery level
-        pre_delivery_entity = f"number.{DOMAIN}_pre_delivery_level"
+        # v3.0.5: Check for AUTO-CAPTURED pre-delivery level using entity registry
         auto_captured_level = 0.0
         
-        if self.hass and (state := self.hass.states.get(pre_delivery_entity)):
+        if self.hass:
             try:
-                auto_captured_level = float(state.state)
-            except (ValueError, TypeError):
-                auto_captured_level = 0.0
+                from homeassistant.helpers import entity_registry as er
+                
+                # Get entity registry
+                entity_reg = er.async_get(self.hass)
+                
+                # Find the pre-delivery level number entity by unique_id pattern
+                # The unique_id is {entry_id}_pre_delivery_level
+                for entity in entity_reg.entities.values():
+                    if entity.unique_id and entity.unique_id.endswith("_pre_delivery_level"):
+                        if entity.platform == DOMAIN:
+                            # Found it! Now get its state
+                            if state := self.hass.states.get(entity.entity_id):
+                                try:
+                                    auto_captured_level = float(state.state)
+                                    break
+                                except (ValueError, TypeError):
+                                    pass
+            except Exception as e:
+                _LOGGER.debug(f"Could not lookup pre-delivery level entity: {e}")
         
         # Calculate starting level based on available data
         if auto_captured_level > 0:

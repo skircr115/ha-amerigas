@@ -108,20 +108,34 @@ class DeliveryTracker:
                 f"(Current: {current_level} gal, Delivery: {delivery_amount} gal)"
             )
             
-            # Update the number entity
-            entity_id = f"number.{DOMAIN}_pre_delivery_level"
-            if state := self.hass.states.get(entity_id):
-                # Trigger update by setting the value
-                self.hass.async_create_task(
-                    self.hass.services.async_call(
-                        "number",
-                        "set_value",
-                        {
-                            "entity_id": entity_id,
-                            "value": self._pre_delivery_level,
-                        },
-                    )
-                )
+            # Update the number entity using entity registry lookup
+            try:
+                from homeassistant.helpers import entity_registry as er
+                
+                # Get entity registry
+                entity_reg = er.async_get(self.hass)
+                
+                # Find the pre-delivery level number entity by unique_id
+                for entity in entity_reg.entities.values():
+                    if entity.unique_id and entity.unique_id.endswith("_pre_delivery_level"):
+                        if entity.platform == DOMAIN:
+                            # Found it! Update via service call
+                            self.hass.async_create_task(
+                                self.hass.services.async_call(
+                                    "number",
+                                    "set_value",
+                                    {
+                                        "entity_id": entity.entity_id,
+                                        "value": self._pre_delivery_level,
+                                    },
+                                )
+                            )
+                            _LOGGER.info(
+                                f"Updated {entity.entity_id} to {self._pre_delivery_level} gal"
+                            )
+                            break
+            except Exception as e:
+                _LOGGER.error(f"Error updating pre-delivery level entity: {e}")
             
         except Exception as e:
             _LOGGER.error(f"Error capturing pre-delivery level: {e}")
@@ -140,10 +154,13 @@ class PreDeliveryLevelNumber(NumberEntity, RestoreEntity):
     
     The value is used by the "Used Since Last Delivery" sensor to provide
     accurate consumption tracking regardless of delivery size.
+    
+    Note: Entity lookups use unique_id via entity registry, so this works
+    regardless of device/entity naming changes in the UI.
     """
     
-    _attr_has_entity_name = False  # Use explicit name for predictable entity_id
-    _attr_name = "AmeriGas Pre-Delivery Level"  # Generates: number.amerigas_pre_delivery_level
+    _attr_has_entity_name = True  # Creates name based on device (e.g., "Propane Tank Pre-Delivery Tank Level")
+    _attr_name = "Pre-Delivery Tank Level"
     _attr_icon = "mdi:gauge-empty"
     _attr_native_unit_of_measurement = UnitOfVolume.GALLONS
     _attr_mode = NumberMode.BOX
@@ -154,7 +171,7 @@ class PreDeliveryLevelNumber(NumberEntity, RestoreEntity):
         """Initialize the number entity."""
         self.coordinator = coordinator
         self._entry_id = entry.entry_id
-        self._attr_unique_id = f"{entry.entry_id}_pre_delivery_level"
+        self._attr_unique_id = f"{entry.entry_id}_pre_delivery_level"  # Stable unique_id for lookups
         self._attr_device_info = {
             "identifiers": {(DOMAIN, entry.entry_id)},
             "name": "AmeriGas Propane",
