@@ -9,6 +9,15 @@
 
 ## ✨ What's New in v3.0.5
 
+### 🔧 CRITICAL: Fixed Automatic Updates
+**The integration now updates reliably every 6 hours!**
+
+Previous versions had a connection leak that caused automatic updates to stop after 6-14 hours. This has been completely fixed:
+- ✅ Persistent HTTP session (no more connection leaks)
+- ✅ Proper cleanup on shutdown
+- ✅ No more "Unclosed connection" errors
+- ✅ Automatic 6-hour updates work indefinitely
+
 ### 🎯 Automatic Pre-Delivery Detection
 **The integration now automatically captures your exact tank level when a delivery happens!**
 
@@ -170,11 +179,11 @@ No more 0% accuracy for small deliveries. No more manual entry. Just works!
 
 ---
 
-## 🛠️ Manual Pre-Delivery Level Service (v3.0.5)
+## 🛠️ Manual Services (v3.0.5)
 
-### When to Use Manual Override
+### Service: Set Pre-Delivery Level
 
-While automatic detection works for all deliveries after v3.0.5 installation, you may need to manually set the pre-delivery level if:
+For edge cases and historical deliveries:
 
 - **A delivery happened BEFORE upgrading to v3.0.5** - Historic deliveries won't have auto-captured values
 - **Automatic detection failed** - Rare cases where delivery detection didn't trigger
@@ -233,18 +242,125 @@ Or simply check your tank gauge reading before the delivery truck arrives!
 
 ---
 
+### Service: Refresh Data
+
+**Force an immediate update from the AmeriGas API**
+
+The integration automatically updates every **6 hours**, but you can manually refresh anytime.
+
+**When to use:**
+- You want current data right now
+- Checking if a delivery has been recorded
+- Troubleshooting update issues
+- Just installed and want fresh data
+
+**Via Developer Tools:**
+1. Go to **Developer Tools** → **Services**
+2. Search for `AmeriGas: Refresh Data`
+3. Click **Call Service** (no parameters needed)
+
+**Example Service Call:**
+```yaml
+service: amerigas.refresh_data
+```
+
+**Via Automation:**
+```yaml
+# Example: Refresh data every morning at 6 AM
+automation:
+  - alias: "Daily Propane Update"
+    trigger:
+      - platform: time
+        at: "06:00:00"
+    action:
+      - service: amerigas.refresh_data
+```
+
+**What the Service Does:**
+- Fetches latest data from AmeriGas API immediately
+- Updates all 37 sensors with fresh data
+- Triggers delivery detection if new delivery found
+- Logs update status for troubleshooting
+
+**Automatic Update Schedule:**
+- **Default:** Every 6 hours
+- **Started:** When Home Assistant starts
+- **Continues:** Runs in background automatically
+- **Manual:** Use this service to force update anytime
+
+**Note:** If you notice sensors not updating automatically, check Home Assistant logs for errors and use this service to manually refresh.
+
+---
+
 ## 🔧 Troubleshooting
+
+### Sensors Haven't Updated in 6+ Hours
+
+**Issue:** Sensors show stale data (last updated 6-14+ hours ago)
+
+**v3.0.5 Fix:** This was caused by connection leaks and is now fixed! If you're on v3.0.5:
+
+**Quick Fix:**
+1. Use manual refresh: `service: amerigas.refresh_data`
+2. Check logs for "Unclosed connection" errors
+3. If you see connection errors, restart Home Assistant
+4. After restart with v3.0.5, automatic updates should work
+
+**If still having issues:**
+- Enable debug logging (see COORDINATOR_UPDATE_GUIDE.md)
+- Check for API errors in logs
+- Verify AmeriGas website is accessible
+- Try manual refresh to confirm credentials work
+
+**Note:** Versions before v3.0.5 had connection leaks causing updates to stop. v3.0.5 fixes this completely.
+
+### Finding Your Pre-Delivery Level Entity
+
+**The entity ID is dynamic based on your device name!**
+
+Common entity IDs:
+- `number.amerigas_propane_pre_delivery_tank_level` (default device name)
+- `number.propane_tank_pre_delivery_tank_level` (if you renamed device to "Propane Tank")
+- `number.my_tank_pre_delivery_tank_level` (if you renamed device to "My Tank")
+
+**To find yours:**
+1. Go to **Developer Tools** → **States**
+2. Search for: `pre_delivery`
+3. Look for the number entity with "Pre-Delivery Tank Level" in the name
+
+**Note:** The integration uses entity registry lookups by unique_id, so the service and automatic detection work regardless of what you name the device in the UI!
+
+### Service Works But Still Shows Fallback Calculation
+
+**Issue:** After running `amerigas.set_pre_delivery_level`, the sensor still shows fallback estimation.
+
+**Check:**
+1. Verify the number entity value is > 0 (not 0)
+2. Restart Home Assistant after setting the value
+3. Check Home Assistant logs for any errors
+
+**If still not working:**
+- Check logs for "Could not lookup pre-delivery level entity"
+- Verify the number entity exists in Developer Tools → States
+- Try manually setting the state in Developer Tools
 
 ### Pre-Delivery Level Shows 0
 
 **First delivery after upgrade:**
 - Normal! The auto-capture only works for NEW deliveries after v3.0.5 installation
 - Wait for your next delivery and it will capture automatically
-- Or manually set the value in Developer Tools → States
+- Or use the service to manually set the value
 
-**Manual override if needed:**
+**Using the service:**
+```yaml
+service: amerigas.set_pre_delivery_level
+data:
+  gallons: 391.9
+```
+
+**Or manually via Developer Tools:**
 1. Go to **Developer Tools** → **States**
-2. Find `number.amerigas_pre_delivery_level`
+2. Search for `pre_delivery` to find your entity
 3. Set to your actual pre-delivery level
 4. Click **Set State**
 

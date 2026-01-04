@@ -13,3 +13,8 @@ set_pre_delivery_level:
           max: 1000
           step: 0.1
           unit_of_measurement: gal
+
+refresh_data:
+  name: Refresh Data
+  description: Manually refresh data from the AmeriGas API. Use this to force an immediate update instead of waiting for the automatic 6-hour refresh cycle.
+

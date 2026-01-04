@@ -19,6 +19,7 @@ from .delivery_tracker import DeliveryTracker
 _LOGGER = logging.getLogger(__name__)
 
 SERVICE_SET_PRE_DELIVERY_LEVEL = "set_pre_delivery_level"
+SERVICE_REFRESH_DATA = "refresh_data"
 ATTR_GALLONS = "gallons"
 
 SERVICE_SET_PRE_DELIVERY_LEVEL_SCHEMA = vol.Schema(
@@ -41,9 +42,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     
     async def async_update_data():
         """Fetch data from AmeriGas."""
+        _LOGGER.debug("Starting scheduled data update from AmeriGas API")
         try:
-            return await api.async_get_data()
+            data = await api.async_get_data()
+            _LOGGER.info("Successfully updated data from AmeriGas API")
+            return data
         except Exception as err:
+            _LOGGER.error(f"Error communicating with AmeriGas: {err}")
             raise UpdateFailed(f"Error communicating with AmeriGas: {err}") from err
     
     coordinator = DataUpdateCoordinator(
@@ -64,6 +69,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN][entry.entry_id] = {
         "coordinator": coordinator,
         "tracker": tracker,
+        "api": api,  # Store API for cleanup on unload
     }
     
     # Register service for manual pre-delivery level setting
@@ -108,7 +114,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         except Exception as e:
             _LOGGER.error(f"Error setting pre-delivery level: {e}")
     
-    # Register the service (only once for the domain)
+    # Register service for manual data refresh
+    async def async_handle_refresh_data(call: ServiceCall) -> None:
+        """Handle the refresh_data service call to manually update from AmeriGas API."""
+        try:
+            _LOGGER.info("Manual refresh requested via service call")
+            await coordinator.async_request_refresh()
+            _LOGGER.info("Manual refresh completed successfully")
+        except Exception as e:
+            _LOGGER.error(f"Error during manual refresh: {e}")
+    
+    # Register the services (only once for the domain)
     if not hass.services.has_service(DOMAIN, SERVICE_SET_PRE_DELIVERY_LEVEL):
         hass.services.async_register(
             DOMAIN,
@@ -117,7 +133,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             schema=SERVICE_SET_PRE_DELIVERY_LEVEL_SCHEMA,
         )
     
+    if not hass.services.has_service(DOMAIN, SERVICE_REFRESH_DATA):
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_REFRESH_DATA,
+            async_handle_refresh_data,
+        )
+    
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    
+    # Register cleanup on shutdown
+    async def _async_close_session(event):
+        """Close API session on shutdown."""
+        if api and not api._session.closed if api._session else False:
+            await api.close()
+            _LOGGER.debug("API session closed on HA shutdown")
+    
+    entry.async_on_unload(
+        hass.bus.async_listen_once("homeassistant_stop", _async_close_session)
+    )
     
     return True
 
@@ -125,10 +159,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
-        hass.data[DOMAIN].pop(entry.entry_id)
+        # Close API session
+        data = hass.data[DOMAIN].pop(entry.entry_id)
+        if api := data.get("api"):
+            await api.close()
+            _LOGGER.debug("API session closed on integration unload")
         
-        # Unregister service if no other instances are running
+        # Unregister services if no other instances are running
         if not hass.data[DOMAIN]:
             hass.services.async_remove(DOMAIN, SERVICE_SET_PRE_DELIVERY_LEVEL)
+            hass.services.async_remove(DOMAIN, SERVICE_REFRESH_DATA)
     
     return unload_ok

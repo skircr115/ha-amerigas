@@ -33,6 +33,20 @@ class AmeriGasAPI:
         self.password = password
         self._session: aiohttp.ClientSession | None = None
     
+    async def _get_session(self) -> aiohttp.ClientSession:
+        """Get or create aiohttp session."""
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession()
+            _LOGGER.debug("Created new aiohttp session")
+        return self._session
+    
+    async def close(self) -> None:
+        """Close the aiohttp session."""
+        if self._session and not self._session.closed:
+            await self._session.close()
+            _LOGGER.debug("Closed aiohttp session")
+            self._session = None
+    
     async def async_get_data(self) -> dict[str, Any]:
         """Fetch data from AmeriGas portal."""
         try:
@@ -43,63 +57,66 @@ class AmeriGasAPI:
             return self._parse_account_data(account_data)
             
         except aiohttp.ClientError as err:
+            _LOGGER.error(f"Network error: {err}")
             raise AmeriGasAPIError(f"Network error: {err}") from err
         except json.JSONDecodeError as err:
+            _LOGGER.error(f"JSON parsing error: {err}")
             raise AmeriGasAPIError(f"JSON parsing error: {err}") from err
     
     async def _async_fetch_dashboard(self) -> dict[str, Any]:
         """Login and fetch dashboard data."""
-        async with aiohttp.ClientSession() as session:
-            # Base64 encode credentials
-            encoded_email = base64.b64encode(self.username.encode()).decode()
-            encoded_password = base64.b64encode(self.password.encode()).decode()
+        session = await self._get_session()
+        
+        # Base64 encode credentials
+        encoded_email = base64.b64encode(self.username.encode()).decode()
+        encoded_password = base64.b64encode(self.password.encode()).decode()
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': 'application/json, text/javascript, */*; q=0.01',
+            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+            'X-Requested-With': 'XMLHttpRequest'
+        }
+        
+        login_data = {
+            'loginViewModel[EmailAddress]': encoded_email,
+            'loginViewModel[Password]': encoded_password,
+            'loginViewModel[SAPErrorMessage]': ''
+        }
+        
+        # Login
+        async with session.post(
+            API_LOGIN_URL,
+            data=login_data,
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=API_TIMEOUT)
+        ) as response:
+            if response.status != 200:
+                raise AmeriGasAuthError(f"Login failed with status {response.status}")
             
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Accept': 'application/json, text/javascript, */*; q=0.01',
-                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-                'X-Requested-With': 'XMLHttpRequest'
-            }
+            login_result = await response.json()
+            if not login_result.get('success'):
+                error_msg = login_result.get('message', 'Unknown error')
+                raise AmeriGasAuthError(f"Login failed: {error_msg}")
+        
+        # Get dashboard
+        async with session.get(
+            API_DASHBOARD_URL,
+            timeout=aiohttp.ClientTimeout(total=API_TIMEOUT)
+        ) as response:
+            if response.status != 200:
+                raise AmeriGasAPIError(f"Dashboard fetch failed with status {response.status}")
             
-            login_data = {
-                'loginViewModel[EmailAddress]': encoded_email,
-                'loginViewModel[Password]': encoded_password,
-                'loginViewModel[SAPErrorMessage]': ''
-            }
-            
-            # Login
-            async with session.post(
-                API_LOGIN_URL,
-                data=login_data,
-                headers=headers,
-                timeout=aiohttp.ClientTimeout(total=API_TIMEOUT)
-            ) as response:
-                if response.status != 200:
-                    raise AmeriGasAuthError(f"Login failed with status {response.status}")
-                
-                login_result = await response.json()
-                if not login_result.get('success'):
-                    error_msg = login_result.get('message', 'Unknown error')
-                    raise AmeriGasAuthError(f"Login failed: {error_msg}")
-            
-            # Get dashboard
-            async with session.get(
-                API_DASHBOARD_URL,
-                timeout=aiohttp.ClientTimeout(total=API_TIMEOUT)
-            ) as response:
-                if response.status != 200:
-                    raise AmeriGasAPIError(f"Dashboard fetch failed with status {response.status}")
-                
-                dashboard_text = await response.text()
-            
-            # Parse accountSummaryViewModel from JavaScript
-            pattern = r'accountSummaryViewModel\s*=\s*({.*?});'
-            match = re.search(pattern, dashboard_text, re.DOTALL)
-            
-            if not match:
-                raise AmeriGasAPIError("Could not find accountSummaryViewModel in page")
-            
-            return json.loads(match.group(1))
+            dashboard_text = await response.text()
+        
+        # Parse accountSummaryViewModel from JavaScript
+        pattern = r'accountSummaryViewModel\s*=\s*({.*?});'
+        match = re.search(pattern, dashboard_text, re.DOTALL)
+        
+        if not match:
+            raise AmeriGasAPIError("Could not find accountSummaryViewModel in page")
+        
+        return json.loads(match.group(1))
     
     def _parse_account_data(self, account_data: dict[str, Any]) -> dict[str, Any]:
         """Parse raw account data into clean format."""

@@ -22,6 +22,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 🔧 Bug Fixes
 
+#### Unclosed Connection Leak (v3.0.5) - CRITICAL FIX
+- **Fixed**: API now uses persistent aiohttp session instead of creating new session per request
+- **Impact**: Eliminates "Unclosed connection" errors that caused coordinator to stop updating
+- **Root cause**: Creating new session for every API call left connections open
+- **Solution**: Single persistent session with proper lifecycle management
+- **Added**: Explicit session cleanup on integration unload and HA shutdown
+- **Result**: Automatic 6-hour updates now work reliably without connection exhaustion
+
+#### Dynamic Entity ID Support (v3.0.5)
+- **Fixed**: All entity lookups now use entity registry with unique_id matching
+- **Impact**: Service and automatic detection work regardless of device/entity naming in UI
+- **How it works**: Finds entities by `unique_id` ending with `_pre_delivery_level` instead of hardcoded entity IDs
+- **Benefit**: Users can rename device from "AmeriGas Propane" to "My Tank" and everything still works
+- **Technical**: Implemented in sensor.py, delivery_tracker.py, and __init__.py
+
+#### Coordinator Access (v3.0.5)
+- **Fixed**: Sensors now correctly extract coordinator from `hass.data` dictionary
+- **Changed**: `sensor.py` line 43 now accesses `hass.data[DOMAIN][entry.entry_id]["coordinator"]`
+- **Impact**: All 37 sensors load correctly without AttributeError
+- **Root cause**: Service registration changed data structure from direct coordinator to dictionary
+
 #### Estimated Refill Cost
 - **Fixed**: Changed from assuming 100% tank fill to realistic 80% fill (industry standard)
 - **Impact**: Cost estimates are now 50% more accurate
@@ -46,6 +67,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Parameters**: `gallons` (float, 0-1000)
   - **Example**: `service: amerigas.set_pre_delivery_level` with `data: {gallons: 391.9}`
   - Service updates the number entity and logs the change
+
+- **Added**: `amerigas.refresh_data` - Manual service to force immediate API update
+  - **Use case**: Force refresh instead of waiting for 6-hour automatic cycle
+  - **Use case**: Get current data immediately after a delivery
+  - **Use case**: Troubleshoot update issues
+  - **Parameters**: None
+  - **Example**: `service: amerigas.refresh_data`
+  - Fetches all data from AmeriGas API and updates all sensors
 
 #### Enhanced Sensor Attributes
 - **Added**: `accuracy` attribute to "Used Since Delivery" sensor
@@ -88,6 +117,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added comprehensive docstrings
 - Added inline comments explaining logic
 - Improved error handling
+- **Enhanced coordinator logging** - Now logs every update attempt (success/failure)
+- **Added debug logging** - Track update schedule and API calls
 - Enhanced logging for debugging
 
 ### 🔄 Migration Notes
