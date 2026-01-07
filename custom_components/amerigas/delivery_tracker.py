@@ -176,7 +176,7 @@ class PreDeliveryLevelNumber(NumberEntity, RestoreEntity):
             "identifiers": {(DOMAIN, entry.entry_id)},
             "name": "AmeriGas Propane",
             "manufacturer": "AmeriGas",
-            "model": "Propane Tank Monitor",
+            "model": "AmeriGas Account",
         }
         
         # Set min/max based on tank size when available
@@ -191,16 +191,23 @@ class PreDeliveryLevelNumber(NumberEntity, RestoreEntity):
         await super().async_added_to_hass()
         
         # Restore previous value
+        restored = False
         if (last_state := await self.async_get_last_state()) is not None:
             if last_state.state not in (None, "unknown", "unavailable"):
                 try:
                     self._attr_native_value = float(last_state.state)
+                    restored = True
                     _LOGGER.info(f"Restored pre-delivery level: {self._attr_native_value} gal")
                 except (ValueError, TypeError):
                     self._attr_native_value = 0.0
         
         # Update min/max based on tank size
         self._update_tank_limits()
+        
+        # Trigger state update to notify sensors (important for restart)
+        if restored:
+            self.async_write_ha_state()
+            _LOGGER.debug("Pre-delivery level state published after restoration")
         
         # Listen for coordinator updates to adjust limits
         self.async_on_remove(

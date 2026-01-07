@@ -5,8 +5,6 @@ import logging
 from datetime import datetime, timedelta
 from typing import Any
 
-_LOGGER = logging.getLogger(__name__)
-
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
@@ -36,6 +34,8 @@ from .const import (
     NOISE_THRESHOLD_GALLONS,
 )
 
+_LOGGER = logging.getLogger(__name__)
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -47,41 +47,41 @@ async def async_setup_entry(
     
     # Base sensors from API
     sensors: list[SensorEntity] = [
-        AmeriGasTankLevelSensor(coordinator),
-        AmeriGasTankSizeSensor(coordinator),
-        AmeriGasDaysRemainingSensor(coordinator),
-        AmeriGasAmountDueSensor(coordinator),
-        AmeriGasAccountBalanceSensor(coordinator),
-        AmeriGasLastPaymentDateSensor(coordinator),
-        AmeriGasLastPaymentAmountSensor(coordinator),
-        AmeriGasLastTankReadingSensor(coordinator),
-        AmeriGasLastDeliveryDateSensor(coordinator),
-        AmeriGasLastDeliveryGallonsSensor(coordinator),
-        AmeriGasNextDeliveryDateSensor(coordinator),
-        AmeriGasAutoPaySensor(coordinator),
-        AmeriGasPaperlessSensor(coordinator),
-        AmeriGasAccountNumberSensor(coordinator),
-        AmeriGasServiceAddressSensor(coordinator),
+        AmeriGasTankLevelSensor(coordinator, entry.entry_id),
+        AmeriGasTankSizeSensor(coordinator, entry.entry_id),
+        AmeriGasDaysRemainingSensor(coordinator, entry.entry_id),
+        AmeriGasAmountDueSensor(coordinator, entry.entry_id),
+        AmeriGasAccountBalanceSensor(coordinator, entry.entry_id),
+        AmeriGasLastPaymentDateSensor(coordinator, entry.entry_id),
+        AmeriGasLastPaymentAmountSensor(coordinator, entry.entry_id),
+        AmeriGasLastTankReadingSensor(coordinator, entry.entry_id),
+        AmeriGasLastDeliveryDateSensor(coordinator, entry.entry_id),
+        AmeriGasLastDeliveryGallonsSensor(coordinator, entry.entry_id),
+        AmeriGasNextDeliveryDateSensor(coordinator, entry.entry_id),
+        AmeriGasAutoPaySensor(coordinator, entry.entry_id),
+        AmeriGasPaperlessSensor(coordinator, entry.entry_id),
+        AmeriGasAccountNumberSensor(coordinator, entry.entry_id),
+        AmeriGasServiceAddressSensor(coordinator, entry.entry_id),
     ]
     
     # Calculated sensors
     sensors.extend([
-        PropaneGallonsRemainingSensor(coordinator),
-        PropaneUsedSinceDeliverySensor(coordinator),
-        PropaneEnergyConsumptionSensor(coordinator),
-        PropaneDailyAverageUsageSensor(coordinator),
-        PropaneDaysUntilEmptySensor(coordinator),
-        PropaneCostPerGallonSensor(coordinator),
-        PropaneCostPerCubicFootSensor(coordinator),
-        PropaneCostSinceDeliverySensor(coordinator),
-        PropaneEstimatedRefillCostSensor(coordinator),
-        PropaneDaysSinceDeliverySensor(coordinator),
-        PropaneDaysRemainingDifferenceSensor(coordinator),
+        PropaneGallonsRemainingSensor(coordinator, entry.entry_id),
+        PropaneUsedSinceDeliverySensor(coordinator, entry.entry_id),
+        PropaneEnergyConsumptionSensor(coordinator, entry.entry_id),
+        PropaneDailyAverageUsageSensor(coordinator, entry.entry_id),
+        PropaneDaysUntilEmptySensor(coordinator, entry.entry_id),
+        PropaneCostPerGallonSensor(coordinator, entry.entry_id),
+        PropaneCostPerCubicFootSensor(coordinator, entry.entry_id),
+        PropaneCostSinceDeliverySensor(coordinator, entry.entry_id),
+        PropaneEstimatedRefillCostSensor(coordinator, entry.entry_id),
+        PropaneDaysSinceDeliverySensor(coordinator, entry.entry_id),
+        PropaneDaysRemainingDifferenceSensor(coordinator, entry.entry_id),
     ])
     
     # Lifetime tracking sensors (v2.0.0+)
-    lifetime_gallons_sensor = PropaneLifetimeGallonsSensor(coordinator, hass)
-    lifetime_energy_sensor = PropaneLifetimeEnergySensor(coordinator, hass, lifetime_gallons_sensor)
+    lifetime_gallons_sensor = PropaneLifetimeGallonsSensor(coordinator, hass, entry.entry_id)
+    lifetime_energy_sensor = PropaneLifetimeEnergySensor(coordinator, hass, lifetime_gallons_sensor, entry.entry_id)
     
     sensors.extend([
         lifetime_gallons_sensor,
@@ -96,12 +96,12 @@ class AmeriGasSensorBase(CoordinatorEntity, SensorEntity):
     
     _attr_has_entity_name = True
     
-    def __init__(self, coordinator: DataUpdateCoordinator) -> None:
+    def __init__(self, coordinator: DataUpdateCoordinator, entry_id: str) -> None:
         """Initialize the sensor."""
         super().__init__(coordinator)
         self._attr_device_info = {
-            "identifiers": {(DOMAIN, "propane_tank")},
-            "name": "Propane Tank",
+            "identifiers": {(DOMAIN, entry_id)},
+            "name": "AmeriGas Propane",
             "manufacturer": "AmeriGas",
             "model": "AmeriGas Account",
         }
@@ -477,6 +477,57 @@ class PropaneUsedSinceDeliverySensor(AmeriGasSensorBase):
     _attr_native_unit_of_measurement = UnitOfVolume.GALLONS
     _attr_state_class = SensorStateClass.TOTAL
     _attr_icon = "mdi:gas-station"
+    
+    async def async_added_to_hass(self) -> None:
+        """Handle entity added to hass."""
+        await super().async_added_to_hass()
+        
+        # Initialize storage for pre-delivery entity ID
+        self._pre_delivery_entity_id = None
+        
+        # Find and listen to the pre-delivery level number entity
+        try:
+            from homeassistant.helpers import entity_registry as er
+            from homeassistant.core import callback
+            
+            entity_reg = er.async_get(self.hass)
+            
+            # Find the pre-delivery level number entity
+            for entity in entity_reg.entities.values():
+                if entity.unique_id and entity.unique_id.endswith("_pre_delivery_level"):
+                    if entity.platform == DOMAIN:
+                        self._pre_delivery_entity_id = entity.entity_id
+                        _LOGGER.debug(
+                            f"Found pre-delivery entity: {self._pre_delivery_entity_id}, "
+                            "setting up state listener"
+                        )
+                        break
+            
+            # Set up listener for pre-delivery level changes
+            if self._pre_delivery_entity_id:
+                @callback
+                def _handle_pre_delivery_change(event):
+                    """Handle pre-delivery level state change."""
+                    # Check if this event is for our entity
+                    if event.data.get("entity_id") != self._pre_delivery_entity_id:
+                        return
+                    
+                    new_state = event.data.get("new_state")
+                    if new_state and new_state.state not in ("unknown", "unavailable"):
+                        _LOGGER.debug(
+                            f"Pre-delivery level changed to {new_state.state}, "
+                            "triggering sensor update"
+                        )
+                        self.async_write_ha_state()
+                
+                self.async_on_remove(
+                    self.hass.bus.async_listen(
+                        "state_changed",
+                        _handle_pre_delivery_change,
+                    )
+                )
+        except Exception as e:
+            _LOGGER.warning(f"Could not set up pre-delivery level listener: {e}")
     
     @property
     def native_value(self) -> float | None:
@@ -936,9 +987,9 @@ class PropaneLifetimeGallonsSensor(AmeriGasSensorBase, RestoreEntity):
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
     _attr_icon = "mdi:gas-station"
     
-    def __init__(self, coordinator: DataUpdateCoordinator, hass: HomeAssistant) -> None:
+    def __init__(self, coordinator: DataUpdateCoordinator, hass: HomeAssistant, entry_id: str) -> None:
         """Initialize the sensor."""
-        super().__init__(coordinator)
+        super().__init__(coordinator, entry_id)
         self._previous_gallons: float | None = None
         self._lifetime_total: float = 0.0
         self._last_consumption_event: datetime | None = None
@@ -1067,9 +1118,9 @@ class PropaneLifetimeEnergySensor(AmeriGasSensorBase):
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
     _attr_icon = "mdi:fire"
     
-    def __init__(self, coordinator: DataUpdateCoordinator, hass: HomeAssistant, lifetime_gallons_sensor: PropaneLifetimeGallonsSensor) -> None:
+    def __init__(self, coordinator: DataUpdateCoordinator, hass: HomeAssistant, lifetime_gallons_sensor: PropaneLifetimeGallonsSensor, entry_id: str) -> None:
         """Initialize the sensor."""
-        super().__init__(coordinator)
+        super().__init__(coordinator, entry_id)
         self._hass = hass
         self._lifetime_gallons_sensor = lifetime_gallons_sensor
     
