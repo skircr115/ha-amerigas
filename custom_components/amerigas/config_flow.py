@@ -36,6 +36,9 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
         raise InvalidAuth from err
     except AmeriGasAPIError as err:
         raise CannotConnect from err
+    finally:
+        # Ensure API session is closed after validation
+        await api.close()
     
     # Return info that you want to store in the config entry.
     return {"title": "AmeriGas Propane"}

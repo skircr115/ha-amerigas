@@ -62,6 +62,9 @@ class AmeriGasAPI:
         except json.JSONDecodeError as err:
             _LOGGER.error(f"JSON parsing error: {err}")
             raise AmeriGasAPIError(f"JSON parsing error: {err}") from err
+        finally:
+            # Close session after each fetch to prevent unclosed connection warnings
+            await self.close()
     
     async def _async_fetch_dashboard(self) -> dict[str, Any]:
         """Login and fetch dashboard data."""

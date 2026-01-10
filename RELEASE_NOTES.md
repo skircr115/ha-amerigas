@@ -1,66 +1,67 @@
-# AmeriGas v3.0.5 - Complete Release Package
+# AmeriGas v3.0.6 - Complete Release Package
 
 ## 🎉 Release Summary
 
-**Version:** 3.0.5  
-**Release Date:** January 4, 2026  
-**Type:** Major Feature Release  
+**Version:** 3.0.6  
+**Release Date:** January 10, 2026  
+**Type:** Bug Fix & Enhancement Release  
 **Status:** ✅ Production Ready
 
 ---
 
-## 🌟 What's New
+## 🌟 What's New in v3.0.6
 
-### 1. Automatic Pre-Delivery Level Detection
-**Zero configuration. 100% accuracy. Forever.**
+### 1. Cron-Based Refresh Schedule
+**Predictable, fixed-time updates instead of relative intervals!**
 
-When a new delivery is detected:
-1. System automatically calculates: `pre_delivery = current - delivery_amount`
-2. Stores value in `number.amerigas_pre_delivery_level`
-3. All consumption sensors use this exact value
-4. Works for ANY delivery size (28 gallons or 300 gallons)
+Refreshes now occur at:
+- 00:00 (midnight)
+- 06:00 (6 AM)
+- 12:00 (noon)
+- 18:00 (6 PM)
 
-**Impact:**
-- v3.0.0: 0% accuracy for 28.1 gallon delivery
-- v3.0.5: 100% accuracy for 28.1 gallon delivery
-- **Zero user effort required**
+Plus immediate refresh on HA startup.
 
-### 2. Manual Pre-Delivery Level Service (NEW!)
-**`amerigas.set_pre_delivery_level`**
+**Benefits:**
+- Know exactly when data updates
+- No schedule drift after HA restarts
+- Consistent timing for automations
 
-For edge cases and historical deliveries:
-- Set pre-delivery level for deliveries before v3.0.5 installation
-- Correct values if automatic detection fails
-- Full manual control when needed
+### 2. Fixed Unclosed Connection Error
+**CRITICAL BUG FIX**
 
-**Usage:**
-```yaml
-service: amerigas.set_pre_delivery_level
-data:
-  gallons: 391.9
-```
+Resolved: `Error doing job: Unclosed connection (None)`
 
-**When to use:**
-- ✅ Delivery happened before upgrading to v3.0.5
-- ✅ Automatic detection didn't trigger
-- ✅ Want to manually correct a value
-- ✅ Historical accuracy for past deliveries
+- Session now properly closed after each API fetch (`api.py`)
+- Session closed after config flow validation (`config_flow.py`)
+- Proper cleanup on integration unload
+- No more connection resource leaks
 
-### 3. Fixed: Estimated Refill Cost
-Now uses realistic **80% maximum fill** instead of 100%.
+### 3. HACS Compliance Updates
 
-**Example:**
-- Tank: 500 gallons at 60%
-- **Old:** $500 estimate ❌
-- **New:** $250 estimate ✅
+**hacs.json:**
+- Added `hacs` minimum version
+- Added `zip_release` flag
+- Added `filename` for releases
 
-### 4. Enhanced Sensor Attributes
-- `accuracy` - Shows estimation quality (100%, 95%, 75%, 90%)
-- `pre_delivery_level` - Exact captured value
-- `calculated_starting_level` - Total starting level
-- `calculation_method` - How value was determined
+**strings.json:**
+- Added service translations for `set_pre_delivery_level`
+- Added service translations for `refresh_data`
 
 ---
+
+## 📦 All v3.0.5 Features Included
+
+### Automatic Pre-Delivery Level Detection
+- Zero configuration. 100% accuracy. Forever.
+- Works for ANY delivery size (28 gallons or 300 gallons)
+
+### Manual Pre-Delivery Level Service
+- `amerigas.set_pre_delivery_level`
+- Set pre-delivery level for historical deliveries
+
+### Fixed Estimated Refill Cost
+- Uses realistic 80% maximum fill instead of 100%
 
 ## 📦 What's Included
 

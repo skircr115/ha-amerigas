@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.6] - 2026-01-10
+
+### 🕐 Cron-Based Refresh Schedule
+
+- **Changed**: Replaced `timedelta(hours=6)` with cron-based scheduling
+- **Schedule**: Refreshes at exactly 00:00, 06:00, 12:00, 18:00 daily
+- **Benefit**: Predictable timing, no drift after HA restarts
+- **Startup**: Still fetches data immediately on HA startup
+- **Implementation**: Uses `async_track_time_change()` from HA helpers
+
+### 🔧 Bug Fixes
+
+#### Unclosed Connection Error - CRITICAL FIX
+- **Fixed**: `Error doing job: Unclosed connection (None)` error in logs
+- **Root cause**: aiohttp session was never closed after API data fetch
+- **Solution**: Added `finally: await self.close()` to `api.py` after each fetch
+- **Also fixed**: Config flow now closes session after credential validation
+- **Impact**: No more connection resource leaks
+
+### 📦 HACS Compliance Updates
+
+- **Enhanced**: `hacs.json` with recommended fields (`hacs`, `zip_release`, `filename`)
+- **Added**: Service translations in `strings.json` for `set_pre_delivery_level` and `refresh_data`
+
+### 🏗️ Technical Changes
+
+#### Modified Files
+- `__init__.py` - Cron-based scheduling via `async_track_time_change()`, proper cleanup
+- `api.py` - Session closed in `finally` block after each fetch
+- `config_flow.py` - Session closed in `finally` block after validation
+- `hacs.json` - Added HACS 1.6.0 requirement, zip_release, filename
+- `strings.json` - Added services translations section
+- `manifest.json` - Version bump to 3.0.6
+
+### 🔄 Migration Notes
+
+#### From v3.0.5
+- **No breaking changes!**
+- Simply update and restart
+- Refresh schedule changes from relative interval to fixed times
+- All existing sensors and entities preserved
+
+---
+
 ## [3.0.5] - 2026-01-04
 
 ### 🎯 Major Features

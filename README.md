@@ -7,44 +7,42 @@
 
 > **HACS custom component** for monitoring your AmeriGas propane account. Track tank levels, deliveries, payments, and integrate with the Energy Dashboard.
 
-## ✨ What's New in v3.0.5
+## ✨ What's New in v3.0.6
 
-### 🔧 CRITICAL: Fixed Automatic Updates
-**The integration now updates reliably every 6 hours!**
+### 🕐 Cron-Based Refresh Schedule
+**Predictable refresh times at 00:00, 06:00, 12:00, and 18:00!**
 
-Previous versions had a connection leak that caused automatic updates to stop after 6-14 hours. This has been completely fixed:
-- ✅ Persistent HTTP session (no more connection leaks)
-- ✅ Proper cleanup on shutdown
-- ✅ No more "Unclosed connection" errors
-- ✅ Automatic 6-hour updates work indefinitely
+- ✅ Fixed schedule instead of relative intervals
+- ✅ Always know when your data will update
+- ✅ No drift after HA restarts
+- ✅ Still refreshes on startup for immediate data
 
-### 🎯 Automatic Pre-Delivery Detection
+### 🔧 CRITICAL: Fixed Unclosed Connection Error
+**Resolved the `Error doing job: Unclosed connection (None)` error!**
+
+The aiohttp session is now properly closed after each API fetch:
+- ✅ Session cleaned up in `api.py` after data fetch
+- ✅ Session cleaned up in `config_flow.py` after validation
+- ✅ No more connection resource leaks
+- ✅ Proper cleanup on integration unload
+
+### 📦 HACS Compliance Improvements
+- ✅ Added recommended `hacs.json` fields
+- ✅ Added service translations to `strings.json`
+
+---
+
+### Previous in v3.0.5
+
+#### 🎯 Automatic Pre-Delivery Detection
 **The integration now automatically captures your exact tank level when a delivery happens!**
 
 - **Zero configuration needed** - works automatically after installation
 - **100% accurate tracking** regardless of delivery size (small top-offs or full deliveries)
 - **No more manual entry** - the system detects new deliveries and calculates pre-delivery levels automatically
 
-**How it works:**
-1. Integration detects when `last_delivery_date` changes
-2. Automatically calculates: `pre_delivery_level = current_level - delivery_amount`
-3. Stores the value permanently for accurate consumption calculations
-4. All future calculations use this exact value
-
-**Your benefits:**
-- Small deliveries (28 gallons): 100% accurate (was 0% accurate in v3.0.0)
-- Medium deliveries (100 gallons): 100% accurate  
-- Large deliveries (300+ gallons): 100% accurate
-- **Zero user effort required**
-
-### 📊 Fixed: Estimated Refill Cost
+#### 📊 Fixed: Estimated Refill Cost
 Now uses realistic **80% maximum fill level** (industry standard) instead of assuming 100% fill.
-
-**Example:**
-- Tank: 500 gallons
-- Current: 300 gallons (60%)
-- **Old:** Estimates 200 gallons needed = $500 ❌
-- **New:** Estimates 100 gallons needed = $250 ✅
 
 ---
 
@@ -283,9 +281,8 @@ automation:
 - Logs update status for troubleshooting
 
 **Automatic Update Schedule:**
-- **Default:** Every 6 hours
-- **Started:** When Home Assistant starts
-- **Continues:** Runs in background automatically
+- **Schedule:** 00:00, 06:00, 12:00, 18:00 daily (cron-based)
+- **On Startup:** Immediate refresh when HA starts
 - **Manual:** Use this service to force update anytime
 
 **Note:** If you notice sensors not updating automatically, check Home Assistant logs for errors and use this service to manually refresh.

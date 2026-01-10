@@ -8,8 +8,9 @@ import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME, Platform
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.event import async_track_time_change
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import AmeriGasAPI
@@ -21,6 +22,9 @@ _LOGGER = logging.getLogger(__name__)
 SERVICE_SET_PRE_DELIVERY_LEVEL = "set_pre_delivery_level"
 SERVICE_REFRESH_DATA = "refresh_data"
 ATTR_GALLONS = "gallons"
+
+# Cron schedule: refresh at 00:00, 06:00, 12:00, 18:00
+REFRESH_HOURS = [0, 6, 12, 18]
 
 SERVICE_SET_PRE_DELIVERY_LEVEL_SCHEMA = vol.Schema(
     {
@@ -51,16 +55,33 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _LOGGER.error(f"Error communicating with AmeriGas: {err}")
             raise UpdateFailed(f"Error communicating with AmeriGas: {err}") from err
     
+    # Create coordinator without automatic update_interval (we use cron instead)
     coordinator = DataUpdateCoordinator(
         hass,
         _LOGGER,
         name=DOMAIN,
         update_method=async_update_data,
-        update_interval=timedelta(hours=6),
+        update_interval=None,  # Disabled - using cron schedule instead
     )
     
     # Fetch initial data
     await coordinator.async_config_entry_first_refresh()
+    
+    # Set up cron-based refresh at 00:00, 06:00, 12:00, 18:00
+    @callback
+    def async_scheduled_refresh(now):
+        """Handle scheduled refresh at cron times."""
+        _LOGGER.debug(f"Cron trigger at {now.strftime('%H:%M')} - requesting data refresh")
+        hass.async_create_task(coordinator.async_request_refresh())
+    
+    # Register time-based triggers for each hour in the schedule
+    unsub_cron = async_track_time_change(
+        hass,
+        async_scheduled_refresh,
+        hour=REFRESH_HOURS,
+        minute=0,
+        second=0,
+    )
     
     # Set up delivery tracker for automatic pre-delivery level capture
     tracker = DeliveryTracker(hass, coordinator, entry.entry_id)
@@ -70,6 +91,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "coordinator": coordinator,
         "tracker": tracker,
         "api": api,  # Store API for cleanup on unload
+        "unsub_cron": unsub_cron,  # Store for cleanup on unload
     }
     
     # Register service for manual pre-delivery level setting
@@ -159,8 +181,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
-        # Close API session
+        # Close API session and clean up cron subscription
         data = hass.data[DOMAIN].pop(entry.entry_id)
+        
+        # Unsubscribe from cron schedule
+        if unsub_cron := data.get("unsub_cron"):
+            unsub_cron()
+            _LOGGER.debug("Cron schedule unsubscribed on integration unload")
+        
         if api := data.get("api"):
             await api.close()
             _LOGGER.debug("API session closed on integration unload")
