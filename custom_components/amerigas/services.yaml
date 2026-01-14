@@ -1,0 +1,20 @@
+set_pre_delivery_level:
+  name: Set Pre-Delivery Level
+  description: Manually set the pre-delivery tank level for accurate consumption tracking. Use this if a delivery happened before v3.0.5 was installed or if automatic detection failed.
+  fields:
+    gallons:
+      name: Pre-Delivery Level (Gallons)
+      description: The tank level in gallons immediately before the last delivery
+      required: true
+      example: 391.9
+      selector:
+        number:
+          min: 0
+          max: 1000
+          step: 0.1
+          unit_of_measurement: gal
+
+refresh_data:
+  name: Refresh Data
+  description: Manually refresh data from the AmeriGas API. Use this to force an immediate update instead of waiting for the automatic 6-hour refresh cycle.
+

@@ -24,6 +24,7 @@ Thumbs.db
 # Test files
 test_*.py
 *_test.py
+tests/__pycache__/
 
 # Secrets (DO NOT COMMIT)
 secrets.yaml
@@ -33,3 +34,18 @@ secrets.yaml
 configuration.yaml
 home-assistant.log
 home-assistant_v2.db
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Coverage
+.coverage
+htmlcov/
+
+# mypy
+.mypy_cache/
+
+# pytest
+.pytest_cache/

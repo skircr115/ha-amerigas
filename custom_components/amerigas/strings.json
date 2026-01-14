@@ -1,0 +1,38 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up AmeriGas Propane",
+        "description": "Enter your MyAmeriGas account credentials",
+        "data": {
+          "username": "Email Address",
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to AmeriGas. Please check your internet connection.",
+      "invalid_auth": "Invalid username or password. Please verify your MyAmeriGas credentials.",
+      "unknown": "Unexpected error occurred. Please try again."
+    },
+    "abort": {
+      "already_configured": "This account is already configured."
+    }
+  },
+  "services": {
+    "set_pre_delivery_level": {
+      "name": "Set Pre-Delivery Level",
+      "description": "Manually set the pre-delivery tank level for accurate consumption tracking.",
+      "fields": {
+        "gallons": {
+          "name": "Gallons",
+          "description": "The tank level in gallons immediately before the last delivery"
+        }
+      }
+    },
+    "refresh_data": {
+      "name": "Refresh Data",
+      "description": "Manually refresh data from the AmeriGas API."
+    }
+  }
+}
