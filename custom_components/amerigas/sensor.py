@@ -638,7 +638,10 @@ class PropaneUsedSinceDeliverySensor(AmeriGasSensorBase):
 
 
 class PropaneEnergyConsumptionSensor(AmeriGasSensorBase):
-    """Energy consumption sensor (display only, not for Energy Dashboard)."""
+    """Energy consumption sensor (display only, not for Energy Dashboard).
+    
+    v3.0.7: Calculate directly from coordinator data instead of entity lookup.
+    """
     
     _attr_name = "Energy Consumption (Display)"
     _attr_unique_id = "propane_energy_consumption"
@@ -649,13 +652,46 @@ class PropaneEnergyConsumptionSensor(AmeriGasSensorBase):
     
     @property
     def native_value(self) -> float | None:
-        """Return energy in cubic feet."""
-        # Get from UsedSinceDelivery sensor
-        used_sensor = self.hass.states.get("sensor.propane_tank_used_since_last_delivery")
-        if used_sensor and used_sensor.state not in ("unknown", "unavailable"):
-            gallons = float(used_sensor.state)
-            return round(gallons * GALLONS_TO_CUBIC_FEET, 2)
-        return None
+        """Return energy in cubic feet.
+        
+        Calculate directly from coordinator data using same logic as UsedSinceDeliverySensor.
+        """
+        tank_size = self.coordinator.data.get("tank_size") or DEFAULT_TANK_SIZE
+        tank_level = self.coordinator.data.get("tank_level") or 0
+        
+        # Bounds check
+        if tank_level < 0:
+            tank_level = 0
+        elif tank_level > 100:
+            tank_level = 100
+        
+        current = tank_size * (tank_level / 100)
+        last_delivery = self.coordinator.data.get("last_delivery_gallons") or 0
+        
+        # Calculate used amount (same logic as UsedSinceDeliverySensor)
+        if last_delivery > 0:
+            if last_delivery < 50:
+                estimated_before = tank_size * 0.65
+            else:
+                estimated_before = tank_size * 0.20
+            starting_level = estimated_before + last_delivery
+            if starting_level > tank_size:
+                starting_level = tank_size
+            used = starting_level - current
+        else:
+            full_fill_level = tank_size * DEFAULT_FILL_PERCENTAGE
+            used = full_fill_level - current
+        
+        used = max(0, used)
+        
+        # Convert to cubic feet
+        return round(used * GALLONS_TO_CUBIC_FEET, 2)
+    
+    @property
+    def available(self) -> bool:
+        """Return availability."""
+        tank_size = self.coordinator.data.get("tank_size")
+        return tank_size is not None and tank_size > 0
 
 
 class PropaneDailyAverageUsageSensor(AmeriGasSensorBase):
@@ -725,7 +761,11 @@ class PropaneDailyAverageUsageSensor(AmeriGasSensorBase):
 
 
 class PropaneDaysUntilEmptySensor(AmeriGasSensorBase):
-    """Days until empty sensor with v2.1.0 improvements."""
+    """Days until empty sensor.
+    
+    v3.0.7: Always calculate days remaining regardless of usage rate.
+    Only unavailable if no usage data exists at all (no delivery ever recorded).
+    """
     
     _attr_name = "Days Until Empty"
     _attr_unique_id = "propane_days_until_empty"
@@ -735,29 +775,79 @@ class PropaneDaysUntilEmptySensor(AmeriGasSensorBase):
     
     @property
     def native_value(self) -> int | None:
-        """Return days until empty."""
+        """Return days until empty.
+        
+        Calculate days remaining based on current usage rate, no matter how small.
+        Only return None if we truly cannot calculate (no delivery data).
+        """
         remaining = self._calculate_gallons_remaining()
         avg_usage = self._calculate_daily_average()
         
+        # Return None only if we can't calculate at all
+        # (avg_usage is None means no delivery has ever been recorded)
         if remaining is None or avg_usage is None:
             return None
         
-        # v2.1.0: Return None instead of 999
-        if remaining <= 0 or avg_usage <= 0.1:
-            return None
+        # If tank is empty, return 0
+        if remaining <= 0:
+            return 0
         
-        return round(remaining / avg_usage)
+        # If usage is effectively zero (< 0.001 gal/day), cap at 9999 days
+        # This prevents overflow while being honest about extremely low usage
+        if avg_usage < 0.001:
+            return 9999
+        
+        # Always do the math - divide remaining by usage rate
+        days = remaining / avg_usage
+        
+        # Cap at reasonable maximum to prevent integer overflow
+        if days > 9999:
+            return 9999
+        
+        return round(days)
     
     @property
     def available(self) -> bool:
-        """Return availability."""
+        """Sensor is available if we have the data needed to calculate.
+        
+        Only unavailable if:
+        - No delivery has ever occurred (no avg_usage data)
+        - Tank size is unknown
+        - Current level is unknown
+        """
         remaining = self._calculate_gallons_remaining()
         avg_usage = self._calculate_daily_average()
         
-        if remaining is None or avg_usage is None:
-            return False
+        # Available as long as we can calculate something
+        # avg_usage being None means no delivery date exists (no usage data ever)
+        return remaining is not None and avg_usage is not None
+    
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return extra attributes."""
+        remaining = self._calculate_gallons_remaining()
+        avg_usage = self._calculate_daily_average()
         
-        return remaining > 0 and avg_usage > 0.1
+        attrs = {
+            "gallons_remaining": remaining,
+            "daily_average_usage": avg_usage,
+        }
+        
+        # Add helpful notes for edge cases
+        if avg_usage is not None:
+            if avg_usage < 0.001:
+                attrs["note"] = "Usage rate extremely low - showing 9999 days as practical maximum"
+            elif avg_usage < 0.1:
+                attrs["note"] = f"Low usage rate: {avg_usage:.3f} gal/day"
+        
+        # Show the calculation for transparency
+        if remaining is not None and avg_usage is not None and avg_usage > 0:
+            days_raw = remaining / avg_usage
+            attrs["calculation"] = f"{remaining:.2f} gal ÷ {avg_usage:.2f} gal/day = {days_raw:.1f} days"
+            if days_raw > 9999:
+                attrs["calculation"] += " (capped at 9999)"
+        
+        return attrs
 
 
 class PropaneCostPerGallonSensor(AmeriGasSensorBase):
@@ -855,17 +945,6 @@ class PropaneEstimatedRefillCostSensor(AmeriGasSensorBase):
         
         v3.0.5: Uses realistic 80% maximum fill level instead of 100%.
         Most propane companies fill to 80% for safety (thermal expansion).
-        
-        Example:
-        - Tank: 500 gallons
-        - Current: 300 gallons (60%)
-        - Max fill: 500 × 0.80 = 400 gallons
-        - Needed: 400 - 300 = 100 gallons
-        - Cost: 100 × $2.50 = $250
-        
-        Old calculation (100% fill):
-        - Needed: 500 - 300 = 200 gallons
-        - Cost: 200 × $2.50 = $500 (too high!)
         """
         tank_size = self.coordinator.data.get("tank_size") or DEFAULT_TANK_SIZE
         remaining = self._calculate_gallons_remaining()
@@ -932,7 +1011,11 @@ class PropaneDaysSinceDeliverySensor(AmeriGasSensorBase):
 
 
 class PropaneDaysRemainingDifferenceSensor(AmeriGasSensorBase):
-    """Days remaining difference sensor."""
+    """Days remaining difference sensor.
+    
+    v3.0.7: Calculate difference regardless of usage rate.
+    Only unavailable if no usage data exists.
+    """
     
     _attr_name = "Days Remaining Difference"
     _attr_unique_id = "propane_days_remaining_difference"
@@ -941,22 +1024,42 @@ class PropaneDaysRemainingDifferenceSensor(AmeriGasSensorBase):
     
     @property
     def native_value(self) -> int | None:
-        """Return difference in estimates."""
+        """Return difference in estimates.
+        
+        Calculates the difference between your calculated estimate and AmeriGas's estimate.
+        Always does the math, regardless of usage rate.
+        """
         amerigas = self.coordinator.data.get("days_remaining") or 0
         
-        # Calculate our own estimate
         remaining = self._calculate_gallons_remaining()
         avg_usage = self._calculate_daily_average()
         
+        # Can't calculate without data
         if remaining is None or avg_usage is None:
             return None
         
-        if remaining <= 0 or avg_usage <= 0.1:
-            return None
-        
-        mine = round(remaining / avg_usage)
+        # Calculate our estimate (same logic as Days Until Empty)
+        if remaining <= 0:
+            mine = 0
+        elif avg_usage < 0.001:
+            mine = 9999  # Cap at same maximum as Days Until Empty
+        else:
+            days = remaining / avg_usage
+            mine = min(round(days), 9999)  # Cap at 9999
         
         return mine - amerigas
+    
+    @property
+    def available(self) -> bool:
+        """Available if we have data to calculate.
+        
+        Only unavailable if no delivery has ever occurred or AmeriGas data missing.
+        """
+        amerigas = self.coordinator.data.get("days_remaining")
+        remaining = self._calculate_gallons_remaining()
+        avg_usage = self._calculate_daily_average()
+        
+        return amerigas is not None and remaining is not None and avg_usage is not None
     
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -965,13 +1068,33 @@ class PropaneDaysRemainingDifferenceSensor(AmeriGasSensorBase):
         avg_usage = self._calculate_daily_average()
         
         mine = None
-        if remaining and avg_usage and remaining > 0 and avg_usage > 0.1:
-            mine = round(remaining / avg_usage)
+        if remaining is not None and avg_usage is not None:
+            if remaining <= 0:
+                mine = 0
+            elif avg_usage < 0.001:
+                mine = 9999
+            else:
+                days = remaining / avg_usage
+                mine = min(round(days), 9999)
         
-        return {
+        attrs = {
             "amerigas_estimate": self.coordinator.data.get("days_remaining"),
             "your_estimate": mine,
+            "gallons_remaining": remaining,
+            "daily_average_usage": avg_usage,
         }
+        
+        # Show calculation for transparency
+        if remaining is not None and avg_usage is not None and avg_usage > 0:
+            days_raw = remaining / avg_usage
+            attrs["calculation"] = f"{remaining:.2f} gal ÷ {avg_usage:.2f} gal/day = {days_raw:.1f} days"
+            if days_raw > 9999:
+                attrs["calculation"] += " (capped at 9999)"
+        
+        if avg_usage is not None and avg_usage < 0.001:
+            attrs["note"] = "Usage rate extremely low - estimate capped at 9999 days"
+        
+        return attrs
 
 
 # =============================================================================
@@ -1103,13 +1226,15 @@ class PropaneLifetimeGallonsSensor(AmeriGasSensorBase, RestoreEntity):
             "ignored_triggers": self._ignored_triggers,
             "largest_consumption": round(self._largest_consumption, 2),
             "threshold_gallons": NOISE_THRESHOLD_GALLONS,
-            "version": "3.0.1",
+            "version": "3.0.7",
         }
 
 
-
 class PropaneLifetimeEnergySensor(AmeriGasSensorBase):
-    """Lifetime energy sensor for Energy Dashboard."""
+    """Lifetime energy sensor for Energy Dashboard.
+    
+    v3.0.7: Return 0.0 instead of None for better Energy Dashboard compatibility.
+    """
     
     _attr_name = "Lifetime Energy"
     _attr_unique_id = "propane_lifetime_energy"
@@ -1125,25 +1250,35 @@ class PropaneLifetimeEnergySensor(AmeriGasSensorBase):
         self._lifetime_gallons_sensor = lifetime_gallons_sensor
     
     @property
-    def native_value(self) -> float | None:
-        """Return lifetime energy in cubic feet."""
+    def native_value(self) -> float:
+        """Return lifetime energy in cubic feet.
+        
+        Math: gallons × 36.3888 = cubic feet
+        Returns 0.0 instead of None for better Energy Dashboard compatibility.
+        """
         # Get directly from the lifetime gallons sensor instance
         gallons = self._lifetime_gallons_sensor.native_value
-        if gallons is None:
-            return None
+        
+        # Return 0.0 instead of None for Energy Dashboard
+        if gallons is None or gallons == 0:
+            return 0.0
         
         return round(gallons * GALLONS_TO_CUBIC_FEET, 2)
     
     @property
     def available(self) -> bool:
-        """Return availability."""
-        return self._lifetime_gallons_sensor.native_value is not None
+        """Always available, even if value is 0."""
+        return True
     
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return extra attributes."""
+        gallons = self._lifetime_gallons_sensor.native_value
+        
         return {
             "source_sensor": "sensor.propane_tank_lifetime_gallons",
             "conversion_factor": GALLONS_TO_CUBIC_FEET,
-            "version": "3.0.4",
+            "lifetime_gallons": gallons if gallons is not None else 0.0,
+            "formula": f"{gallons if gallons else 0.0} gal × {GALLONS_TO_CUBIC_FEET} ft³/gal",
+            "version": "3.0.7",
         }

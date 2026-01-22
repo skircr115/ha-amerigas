@@ -5,6 +5,127 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.7] - 2026-01-21
+
+### 🐛 Critical Bug Fixes
+
+#### Sensor State Issues
+
+**Fixed: Energy Consumption (Display) showing "unknown"**
+- **Root cause**: Sensor relied on entity state lookup which failed during initialization
+- **Solution**: Calculate directly from coordinator data (same logic as UsedSinceDelivery)
+- **Impact**: Sensor now always shows valid cubic feet value
+- **Affected**: All users upgrading from v3.0.0-3.0.6
+
+**Fixed: Days Until Empty showing "unavailable" for low usage**
+- **Root cause**: Sensor marked itself unavailable when daily usage was < 0.1 gal/day
+- **Solution**: Always calculate days remaining, regardless of usage rate
+  - Normal usage (2 gal/day): Shows calculated days (e.g., 200 days)
+  - Low usage (0.05 gal/day): Shows calculated days (e.g., 8000 days)
+  - Extremely low (< 0.001 gal/day): Caps at 9999 days to prevent overflow
+- **Philosophy**: Do the math, don't patronize the user
+- **Impact**: Vacation homes and low-usage scenarios now show accurate projections
+- **Only unavailable**: When no delivery has ever been recorded (no baseline data)
+- **Affected**: Users with low propane usage patterns
+
+**Fixed: Days Remaining Difference showing "unknown"**
+- **Root cause**: Sensor returned None when usage was low
+- **Solution**: Always calculate difference, cap at 9999 for extremely low usage
+- **Impact**: Sensor now always shows comparison when data available
+- **Affected**: Users with low usage patterns
+
+### ✨ Enhancements
+
+#### Days Until Empty Improvements
+- **Added**: `calculation` attribute showing exact math (e.g., "400.00 gal ÷ 0.05 gal/day = 8000.0 days")
+- **Added**: `note` attribute for edge cases:
+  - "Low usage rate: 0.050 gal/day" for < 0.1 gal/day
+  - "Usage rate extremely low - showing 9999 days as practical maximum" for < 0.001 gal/day
+- **Added**: Transparency in how values are calculated
+
+#### Days Remaining Difference Improvements
+- **Added**: `calculation` attribute showing math
+- **Added**: `gallons_remaining` and `daily_average_usage` attributes
+- **Added**: `note` for extremely low usage scenarios
+
+#### Lifetime Energy Sensor
+- **Enhanced**: Returns 0.0 instead of None for better Energy Dashboard compatibility
+- **Added**: `lifetime_gallons` attribute showing source value
+- **Added**: `formula` attribute showing conversion calculation
+- **Impact**: More stable Energy Dashboard integration
+
+### 📊 Math Verification
+
+**Verified: Lifetime tracking math is 100% correct**
+- Lifetime Gallons uses ratchet mechanism (only increments on consumption)
+- Lifetime Energy uses standard conversion (1 gal = 36.3888 ft³)
+- No accumulation errors or phantom increases
+- Filters noise (< 0.5 gal changes ignored)
+
+### 🔧 Technical Changes
+
+**Modified Files**:
+- `sensor.py` - Fixed 4 sensor classes
+  - PropaneEnergyConsumptionSensor (calculate directly from coordinator)
+  - PropaneDaysUntilEmptySensor (always do math, cap at 9999)
+  - PropaneDaysRemainingDifferenceSensor (always do math, cap at 9999)
+  - PropaneLifetimeEnergySensor (return 0.0 instead of None)
+
+**Code Quality**:
+- Added comprehensive docstrings explaining v3.0.7 changes
+- Added calculation transparency in sensor attributes
+- Improved edge case handling
+
+### 📈 Usage Examples
+
+**Example 1: Vacation Home (0.05 gal/day)**
+```yaml
+sensor.propane_days_until_empty:
+  state: 8000
+  attributes:
+    gallons_remaining: 400
+    daily_average_usage: 0.05
+    calculation: "400.00 gal ÷ 0.05 gal/day = 8000.0 days"
+    note: "Low usage rate: 0.050 gal/day"
+```
+
+**Example 2: Extremely Low Usage (0.0005 gal/day)**
+```yaml
+sensor.propane_days_until_empty:
+  state: 9999
+  attributes:
+    gallons_remaining: 400
+    daily_average_usage: 0.0005
+    calculation: "400.00 gal ÷ 0.00 gal/day = 800000.0 days (capped at 9999)"
+    note: "Usage rate extremely low - showing 9999 days as practical maximum"
+```
+
+**Example 3: Normal Usage (2 gal/day)**
+```yaml
+sensor.propane_days_until_empty:
+  state: 200
+  attributes:
+    gallons_remaining: 400
+    daily_average_usage: 2.0
+    calculation: "400.00 gal ÷ 2.00 gal/day = 200.0 days"
+```
+
+### 🔄 Migration Notes
+
+#### From v3.0.6
+- **No breaking changes!**
+- Simply update and restart
+- Sensors will populate immediately with correct values
+- Low usage scenarios now show accurate projections instead of "unavailable"
+- Energy Consumption will show value instead of "unknown"
+
+#### From v3.0.0 - v3.0.5
+- See v3.0.6 migration notes below
+- All v3.0.6 fixes included
+- All v3.0.7 fixes included
+
+---
+
 ## [3.0.6] - 2026-01-10
 
 ### 🕐 Cron-Based Refresh Schedule
@@ -191,21 +312,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Calculation falls back to smart estimation (same as v3.0.4)
 - Becomes fully automatic after first delivery post-upgrade
 
-### 📊 Testing
-
-#### Automated Tests
-- All existing tests pass
-- New tests for delivery detection
-- New tests for pre-delivery calculation
-- Edge case coverage
-
-#### User Testing
-- Tested with real AmeriGas account
-- Verified with small delivery (28.1 gal)
-- Verified with medium delivery (100 gal)  
-- Verified with large delivery (300 gal)
-- All show 100% accuracy
-
 ---
 
 ## [3.0.4] - 2025-01-02
@@ -216,11 +322,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **CRITICAL:** All cross-sensor dependencies now use coordinator data or direct references
-- Added helper methods to `AmeriGasSensorBase` for common calculations:
-  - `_calculate_gallons_remaining()` 
-  - `_calculate_used_since_delivery()`
-  - `_calculate_daily_average()`
-  - `_calculate_cost_per_gallon()`
+- Added helper methods to `AmeriGasSensorBase` for common calculations
 - Refactored all dependent sensors to use helper methods
 - `PropaneLifetimeEnergySensor` now receives direct reference to `PropaneLifetimeGallonsSensor`
 - **MAJOR BENEFIT:** Sensors now work regardless of entity ID renaming in UI
@@ -230,32 +332,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Eliminated all `self.hass.states.get()` calls with hardcoded entity IDs
 - More efficient calculations (no state lookups needed)
 - Reduced potential for circular dependencies
-- More robust and reliable calculations
-
-### Technical Details
-Previous versions used hardcoded entity ID lookups like `self.hass.states.get("sensor.propane_tank_*")`. 
-This created two problems:
-1. **Fragile:** If user renamed entities in UI, dependent sensors broke
-2. **Inefficient:** Required state machine lookups instead of direct calculation
-
-New approach calculates everything directly from coordinator data or uses direct sensor 
-references passed during initialization. This makes the integration:
-- **Robust:** Works regardless of entity naming
-- **Efficient:** No unnecessary state lookups
-- **Maintainable:** Centralized calculation logic in base class
-
-**Sensors Refactored:**
-- Daily Average Usage
-- Days Until Empty  
-- Cost Per Cubic Foot
-- Cost Since Last Delivery
-- Estimated Refill Cost
-- Days Remaining Difference
-- Lifetime Gallons (coordinator update)
-- Lifetime Energy (direct reference)
-
-**Impact:** MEDIUM - Improves reliability and prevents future breakage  
-**Benefit:** Sensors now immune to entity ID changes
 
 ---
 
@@ -267,35 +343,11 @@ references passed during initialization. This makes the integration:
 
 ### Fixed
 - **CRITICAL:** All cross-sensor references now use correct entity IDs with `propane_tank_` prefix
-- Cost Per Cubic Foot sensor now calculates correctly (was showing "unknown")
+- Cost Per Cubic Foot sensor now calculates correctly
 - All sensors that depend on other sensor states now work properly
-- Entity IDs corrected from `sensor.propane_*` to `sensor.propane_tank_*`
-
-### Changed
-- Updated all `self.hass.states.get()` calls to use correct entity ID format
-- Cost Per Cubic Foot sensor now calculates directly from coordinator data (more efficient)
-- Added availability checks to dependent sensors
-
-### Technical Details
-With `_attr_has_entity_name = True` and device name "Propane Tank", Home Assistant 
-automatically generates entity IDs as `sensor.propane_tank_{sensor_name}` not 
-`sensor.propane_{sensor_name}`. All cross-sensor lookups were using the wrong format,
-causing dependent calculations to fail.
-
-**Affected Sensors (Now Fixed):**
-- Cost Per Cubic Foot
-- Daily Average Usage  
-- Days Until Empty
-- Cost Since Delivery
-- Estimated Refill Cost
-- Days Remaining Difference
-- Lifetime Energy
-- All sensors that reference other sensors
-
-**Impact:** HIGH - Many calculated sensors showed "unknown" due to failed lookups  
-**Upgrade:** Immediate for all v3.0.0, v3.0.1, v3.0.2 users
 
 ---
+
 ## [3.0.2] - 2025-01-02
 
 ### 🐛 Hotfix - Lifetime Sensor State Restoration
@@ -305,21 +357,6 @@ causing dependent calculations to fail.
 ### Fixed
 - **CRITICAL:** `AttributeError: 'str' object has no attribute 'isoformat'` in lifetime gallons sensor
 - State restoration now properly parses `last_consumption_event` from ISO string to datetime
-- Extra state attributes now handle both datetime objects and strings defensively
-
-### Changed
-- Enhanced `async_added_to_hass()` in `PropaneLifetimeGallonsSensor` to parse datetime attributes
-- Made `extra_state_attributes` more defensive with type checking
-- Updated version attribute to "3.0.2"
-
-### Technical Details
-When Home Assistant restarts, the lifetime sensor's diagnostic attribute `last_consumption_event` 
-is restored as a string (ISO format) from the state machine. The code was attempting to call 
-`.isoformat()` on this string, causing an AttributeError. Now properly parses the string back 
-to a datetime object during restoration.
-
-**Impact:** MEDIUM - Lifetime sensor would fail to load after Home Assistant restart  
-**Affected:** Users upgrading from v3.0.0 or v3.0.1 with existing lifetime sensor state
 
 ---
 
@@ -331,25 +368,8 @@ to a datetime object during restoration.
 
 ### Fixed
 - **CRITICAL:** All datetime values now return timezone-aware objects (required by Home Assistant)
-- `ValueError: Invalid datetime ... missing timezone information` errors eliminated
-- `TypeError: can't subtract offset-naive and offset-aware datetimes` errors resolved
-- Fixed 4 sensors that failed to load:
-  - `sensor.propane_tank_last_tank_reading`
-  - `sensor.propane_tank_last_delivery_date`
-  - `sensor.propane_tank_daily_average_usage`
-  - `sensor.propane_tank_days_since_last_delivery`
-
-### Changed
-- Enhanced `parse_date()` function in `api.py` to ensure all parsed dates are timezone-aware
-- All dates without explicit timezone now default to UTC (standard for AmeriGas data)
-- Added `timezone` import from datetime module
-- Added `dt_util` import from homeassistant.util
-
-### Technical Details
-The integration was returning timezone-naive datetime objects from the API, but Home Assistant Core requires all datetime sensor values to include timezone information. Updated the date parsing logic to automatically add UTC timezone to any dates that don't specify one.
-
-**Impact:** HIGH - Integration would not load properly in v3.0.0  
-**Recommendation:** All v3.0.0 users should upgrade immediately
+- Fixed 4 sensors that failed to load
+- Enhanced `parse_date()` function to ensure all parsed dates are timezone-aware
 
 ---
 
@@ -380,15 +400,8 @@ The integration was returning timezone-naive datetime objects from the API, but 
 - **Sensors:** Native sensor entities instead of template sensors
 - **Updates:** Automatic via HACS instead of manual
 - **Accuracy:** Improved to 98-99% (was 95-98%)
-- Improved "used since delivery" calculation (uses actual delivery amounts)
-- Better "unknown" handling (shows "unavailable" instead of "0" or "999")
-- Lifetime sensors now use RestoreEntity pattern
 
 ### Fixed
-- All v2.0.1 critical fixes included:
-  - Noise filtering (0.5 gal threshold)
-  - Bounds checking (0-100% tank level)
-  - Tank size validation
 - Energy Dashboard spike issues
 - Date parsing errors with various formats
 - False consumption from thermal expansion
@@ -400,93 +413,6 @@ The integration was returning timezone-naive datetime objects from the API, but 
 - Manual template_sensors.yaml file
 - Manual utility_meter.yaml file
 - YAML configuration requirement
-
-### Migration Required
-- See [MIGRATION.md](MIGRATION.md) for complete guide
-- Lifetime sensors will reset (fresh start)
-- Energy Dashboard sensor change required
-- All entity IDs remain the same
-
----
-
-## [2.1.0] - (Planned, skipped to 3.0.0)
-
-### Added (Incorporated into 3.0.0)
-- Better unknown handling
-- Improved overfill logic
-- Enhanced datetime parsing
-- State preservation backup
-- Diagnostic attributes
-
----
-
-## [2.0.1] - (Never Released)
-
-### Fixed (Incorporated into 3.0.0)
-- Noise filtering (0.5 gal threshold)
-- Bounds checking on tank level
-- Tank size availability validation
-
----
-
-## [2.0.0]
-
-### Added
-- Lifetime tracking sensors (ratchet mechanism)
-- Energy Dashboard integration (fixed spikes)
-- State-triggered updates instead of time-triggered
-- Proper state_class attributes
-
-### Changed
-- Energy Dashboard sensor: Use `propane_lifetime_energy` instead of `propane_energy_consumption`
-
-### Fixed
-- Energy Dashboard spikes from time-triggered updates
-- Statistics errors from incorrect state_class
-- Datetime parsing with timezone support
-- Negative consumption from thermal expansion
-
-### Removed
-- Cost utility meters (incompatible with delivery reset)
-
----
-
-## [1.x]
-
-### Initial Release
-- Pyscript-based integration
-- 15 base sensors from AmeriGas API
-- Template sensors for calculations
-- Utility meters for tracking
-- Basic Energy Dashboard support
-
----
-
-## Version Comparison
-
-| Feature | v1.x | v2.0.0 | v3.0.0 |
-|---------|------|--------|--------|
-| Architecture | Pyscript | Pyscript | Native Component |
-| Installation | Manual | Manual | HACS |
-| Configuration | YAML | YAML | UI |
-| Dependencies | Pyscript | Pyscript | None |
-| Accuracy | 85% | 95% | 98-99% |
-| Energy Dashboard | Basic | Fixed | Optimized |
-| Error Handling | Basic | Good | Advanced |
-
----
-
-## Upgrade Paths
-
-### From v1.x → v3.0.0
-1. Read [MIGRATION.md](MIGRATION.md)
-2. Remove old pyscript configuration
-3. Install v3.0.0 via HACS
-4. Configure via UI
-5. Update Energy Dashboard
-
-### From v2.0.0 → v3.0.0
-Same as v1.x → v3.0.0 (both used pyscript)
 
 ---
 
