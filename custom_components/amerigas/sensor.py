@@ -105,6 +105,90 @@ class AmeriGasSensorBase(CoordinatorEntity, SensorEntity):
             "manufacturer": "AmeriGas",
             "model": "AmeriGas Account",
         }
+        self._pre_delivery_entity_id: str | None = None
+    
+    async def async_added_to_hass(self) -> None:
+        """Set up listener for pre-delivery level changes.
+        
+        v3.0.8: All sensors that depend on usage calculations need to
+        recalculate when the pre-delivery level changes, not just when
+        the coordinator updates.
+        """
+        await super().async_added_to_hass()
+        
+        # Find and cache the pre-delivery level entity ID
+        try:
+            from homeassistant.helpers import entity_registry as er
+            
+            entity_reg = er.async_get(self.hass)
+            
+            for entity in entity_reg.entities.values():
+                if entity.unique_id and entity.unique_id.endswith("_pre_delivery_level"):
+                    if entity.platform == DOMAIN:
+                        self._pre_delivery_entity_id = entity.entity_id
+                        break
+            
+            # Set up listener for pre-delivery level changes
+            if self._pre_delivery_entity_id:
+                @callback
+                def _handle_pre_delivery_change(event):
+                    """Handle pre-delivery level state change."""
+                    if event.data.get("entity_id") != self._pre_delivery_entity_id:
+                        return
+                    
+                    new_state = event.data.get("new_state")
+                    if new_state and new_state.state not in ("unknown", "unavailable"):
+                        # Force recalculation of this sensor
+                        self.async_write_ha_state()
+                
+                self.async_on_remove(
+                    self.hass.bus.async_listen("state_changed", _handle_pre_delivery_change)
+                )
+        except Exception as e:
+            _LOGGER.debug(f"Could not set up pre-delivery level listener: {e}")
+    
+    def _get_pre_delivery_level(self) -> float | None:
+        """Get the pre-delivery level from the number entity.
+        
+        v3.0.8: Centralized helper method for all sensors to use.
+        Returns the auto-captured pre-delivery level if available,
+        or None if not found or not set.
+        """
+        if not hasattr(self, 'hass') or self.hass is None:
+            return None
+        
+        # Use cached entity ID if available (set in async_added_to_hass)
+        if hasattr(self, '_pre_delivery_entity_id') and self._pre_delivery_entity_id:
+            if state := self.hass.states.get(self._pre_delivery_entity_id):
+                try:
+                    value = float(state.state)
+                    if value > 0:
+                        return value
+                except (ValueError, TypeError):
+                    pass
+            return None
+        
+        # Fallback: search entity registry (for sensors that haven't been added to hass yet)
+        try:
+            from homeassistant.helpers import entity_registry as er
+            
+            entity_reg = er.async_get(self.hass)
+            
+            for entity in entity_reg.entities.values():
+                if entity.unique_id and entity.unique_id.endswith("_pre_delivery_level"):
+                    if entity.platform == DOMAIN:
+                        if state := self.hass.states.get(entity.entity_id):
+                            try:
+                                value = float(state.state)
+                                if value > 0:
+                                    return value
+                            except (ValueError, TypeError):
+                                pass
+                        break
+        except Exception as e:
+            _LOGGER.debug(f"Could not get pre-delivery level: {e}")
+        
+        return None
     
     def _calculate_gallons_remaining(self) -> float | None:
         """Calculate gallons remaining from coordinator data."""
@@ -122,8 +206,12 @@ class AmeriGasSensorBase(CoordinatorEntity, SensorEntity):
         
         return round(tank_size * (percent / 100), 2)
     
-    def _calculate_used_since_delivery(self) -> float | None:
-        """Calculate gallons used since delivery from coordinator data."""
+    def _calculate_used_since_delivery(self) -> tuple[float | None, str]:
+        """Calculate gallons used since delivery from coordinator data.
+        
+        v3.0.8: Now uses auto-captured pre-delivery level if available.
+        Returns tuple of (gallons_used, calculation_method).
+        """
         tank_size = self.coordinator.data.get("tank_size") or DEFAULT_TANK_SIZE
         tank_level = self.coordinator.data.get("tank_level") or 0
         
@@ -136,26 +224,45 @@ class AmeriGasSensorBase(CoordinatorEntity, SensorEntity):
         current = tank_size * (tank_level / 100)
         last_delivery = self.coordinator.data.get("last_delivery_gallons") or 0
         
-        # Calculate used amount
-        if last_delivery > 0:
-            estimated_before = tank_size * 0.20
-            starting_level = estimated_before + last_delivery
-            if starting_level > tank_size:
-                starting_level = tank_size
-            used = starting_level - current
-        else:
-            full_fill_level = tank_size * DEFAULT_FILL_PERCENTAGE
-            used = full_fill_level - current
+        # v3.0.8: Check for auto-captured pre-delivery level
+        pre_delivery_level = self._get_pre_delivery_level()
         
-        return max(0, round(used, 2))
+        if pre_delivery_level and pre_delivery_level > 0:
+            # Use auto-captured level (100% accurate)
+            starting_level = pre_delivery_level + last_delivery
+            calculation_method = "auto_captured"
+        elif last_delivery > 0:
+            # Fallback: Smart estimation based on delivery size
+            if last_delivery < 50:
+                estimated_before = tank_size * 0.65
+                calculation_method = "small_delivery_estimate"
+            else:
+                estimated_before = tank_size * 0.20
+                calculation_method = "large_delivery_estimate"
+            starting_level = estimated_before + last_delivery
+        else:
+            # Fallback: assume 80% fill
+            starting_level = tank_size * DEFAULT_FILL_PERCENTAGE
+            calculation_method = "assumed_80_percent"
+        
+        # Cap at tank capacity
+        if starting_level > tank_size:
+            starting_level = tank_size
+        
+        used = starting_level - current
+        
+        return (max(0, round(used, 2)), calculation_method)
     
     def _calculate_daily_average(self) -> float | None:
-        """Calculate daily average usage from coordinator data."""
+        """Calculate daily average usage from coordinator data.
+        
+        v3.0.8: Now uses _calculate_used_since_delivery which includes pre-delivery level.
+        """
         last_date = self.coordinator.data.get("last_delivery_date")
         if not last_date:
             return None
         
-        used = self._calculate_used_since_delivery()
+        used, _ = self._calculate_used_since_delivery()
         if used is None:
             return None
         
@@ -450,27 +557,21 @@ class PropaneGallonsRemainingSensor(AmeriGasSensorBase):
     @property
     def native_value(self) -> float | None:
         """Return gallons remaining with bounds checking."""
-        tank_size = self.coordinator.data.get("tank_size") or DEFAULT_TANK_SIZE
-        percent = self.coordinator.data.get("tank_level") or 0
-        
-        # v2.0.1: Bounds check - clamp to 0-100%
-        if percent < 0:
-            percent = 0
-        elif percent > 100:
-            percent = 100
-        
-        return round(tank_size * (percent / 100), 2)
+        return self._calculate_gallons_remaining()
     
     @property
     def available(self) -> bool:
         """Return if sensor is available."""
-        # v2.0.1: Require valid tank size
         tank_size = self.coordinator.data.get("tank_size")
         return tank_size is not None and tank_size > 0
 
 
 class PropaneUsedSinceDeliverySensor(AmeriGasSensorBase):
-    """Used since delivery sensor with v2.1.0 improvements."""
+    """Used since delivery sensor with v3.0.8 improvements.
+    
+    v3.0.8: Now uses the centralized _calculate_used_since_delivery() helper
+    which properly looks up the pre-delivery level.
+    """
     
     _attr_name = "Used Since Last Delivery"
     _attr_unique_id = "propane_used_since_last_delivery"
@@ -478,158 +579,54 @@ class PropaneUsedSinceDeliverySensor(AmeriGasSensorBase):
     _attr_state_class = SensorStateClass.TOTAL
     _attr_icon = "mdi:gas-station"
     
-    async def async_added_to_hass(self) -> None:
-        """Handle entity added to hass."""
-        await super().async_added_to_hass()
-        
-        # Initialize storage for pre-delivery entity ID
-        self._pre_delivery_entity_id = None
-        
-        # Find and listen to the pre-delivery level number entity
-        try:
-            from homeassistant.helpers import entity_registry as er
-            from homeassistant.core import callback
-            
-            entity_reg = er.async_get(self.hass)
-            
-            # Find the pre-delivery level number entity
-            for entity in entity_reg.entities.values():
-                if entity.unique_id and entity.unique_id.endswith("_pre_delivery_level"):
-                    if entity.platform == DOMAIN:
-                        self._pre_delivery_entity_id = entity.entity_id
-                        _LOGGER.debug(
-                            f"Found pre-delivery entity: {self._pre_delivery_entity_id}, "
-                            "setting up state listener"
-                        )
-                        break
-            
-            # Set up listener for pre-delivery level changes
-            if self._pre_delivery_entity_id:
-                @callback
-                def _handle_pre_delivery_change(event):
-                    """Handle pre-delivery level state change."""
-                    # Check if this event is for our entity
-                    if event.data.get("entity_id") != self._pre_delivery_entity_id:
-                        return
-                    
-                    new_state = event.data.get("new_state")
-                    if new_state and new_state.state not in ("unknown", "unavailable"):
-                        _LOGGER.debug(
-                            f"Pre-delivery level changed to {new_state.state}, "
-                            "triggering sensor update"
-                        )
-                        self.async_write_ha_state()
-                
-                self.async_on_remove(
-                    self.hass.bus.async_listen(
-                        "state_changed",
-                        _handle_pre_delivery_change,
-                    )
-                )
-        except Exception as e:
-            _LOGGER.warning(f"Could not set up pre-delivery level listener: {e}")
+    def __init__(self, coordinator: DataUpdateCoordinator, entry_id: str) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, entry_id)
+        self._calculation_method = "unknown"
+        self._starting_level = 0.0
     
     @property
     def native_value(self) -> float | None:
-        """Return gallons used with auto-captured pre-delivery level.
+        """Return gallons used with auto-captured pre-delivery level."""
+        used, method = self._calculate_used_since_delivery()
+        self._calculation_method = method
         
-        v3.0.5: Uses automatically captured pre-delivery level from DeliveryTracker.
-        When a new delivery is detected, the system automatically calculates:
-        pre_delivery = current_level - delivery_amount
-        
-        This provides 100% accurate tracking regardless of delivery size.
-        """
-        tank_size = self.coordinator.data.get("tank_size") or DEFAULT_TANK_SIZE
-        tank_level = self.coordinator.data.get("tank_level") or 0
-        
-        # Bounds check
-        if tank_level < 0:
-            tank_level = 0
-        elif tank_level > 100:
-            tank_level = 100
-        
-        current = tank_size * (tank_level / 100)
+        # Calculate starting level for attributes
+        pre_delivery = self._get_pre_delivery_level()
         last_delivery = self.coordinator.data.get("last_delivery_gallons") or 0
+        tank_size = self.coordinator.data.get("tank_size") or DEFAULT_TANK_SIZE
         
-        # v3.0.5: Check for AUTO-CAPTURED pre-delivery level using entity registry
-        auto_captured_level = 0.0
-        
-        if self.hass:
-            try:
-                from homeassistant.helpers import entity_registry as er
-                
-                # Get entity registry
-                entity_reg = er.async_get(self.hass)
-                
-                # Find the pre-delivery level number entity by unique_id pattern
-                # The unique_id is {entry_id}_pre_delivery_level
-                for entity in entity_reg.entities.values():
-                    if entity.unique_id and entity.unique_id.endswith("_pre_delivery_level"):
-                        if entity.platform == DOMAIN:
-                            # Found it! Now get its state
-                            if state := self.hass.states.get(entity.entity_id):
-                                try:
-                                    auto_captured_level = float(state.state)
-                                    break
-                                except (ValueError, TypeError):
-                                    pass
-            except Exception as e:
-                _LOGGER.debug(f"Could not lookup pre-delivery level entity: {e}")
-        
-        # Calculate starting level based on available data
-        if auto_captured_level > 0:
-            # v3.0.5: AUTO-CAPTURED level (100% accurate!)
-            starting_level = auto_captured_level + last_delivery
-            calculation_method = "auto_captured"
+        if pre_delivery and pre_delivery > 0:
+            self._starting_level = min(pre_delivery + last_delivery, tank_size)
         elif last_delivery > 0:
-            # Fallback: Smart estimation based on delivery size
             if last_delivery < 50:
-                # Small delivery = likely a top-off
                 estimated_before = tank_size * 0.65
-                calculation_method = "small_delivery_estimate"
             else:
-                # Large delivery = likely a fill from low
                 estimated_before = tank_size * 0.20
-                calculation_method = "large_delivery_estimate"
-            
-            starting_level = estimated_before + last_delivery
+            self._starting_level = min(estimated_before + last_delivery, tank_size)
         else:
-            # Fallback: assume 80% fill
-            starting_level = tank_size * DEFAULT_FILL_PERCENTAGE
-            calculation_method = "assumed_80_percent"
+            self._starting_level = tank_size * DEFAULT_FILL_PERCENTAGE
         
-        # Cap at tank capacity
-        if starting_level > tank_size:
-            starting_level = tank_size
-        
-        used = starting_level - current
-        
-        # Store calculation method for attributes
-        self._calculation_method = calculation_method
-        self._starting_level = starting_level
-        self._pre_delivery_level = auto_captured_level if auto_captured_level > 0 else None
-        
-        # If negative (overfill/heat), show 0
-        return max(0, round(used, 2))
+        return used
     
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return extra attributes."""
         last_delivery = self.coordinator.data.get("last_delivery_gallons") or 0
+        pre_delivery = self._get_pre_delivery_level()
         
         attrs = {
-            "calculation_method": getattr(self, '_calculation_method', 'unknown'),
+            "calculation_method": self._calculation_method,
             "last_delivery_gallons": last_delivery,
-            "calculated_starting_level": round(getattr(self, '_starting_level', 0), 2),
+            "calculated_starting_level": round(self._starting_level, 2),
         }
         
-        # Add pre-delivery level if auto-captured
-        if hasattr(self, '_pre_delivery_level') and self._pre_delivery_level:
-            attrs["pre_delivery_level"] = round(self._pre_delivery_level, 2)
+        if pre_delivery and pre_delivery > 0:
+            attrs["pre_delivery_level"] = round(pre_delivery, 2)
             attrs["accuracy"] = "100% (auto-captured)"
-        elif attrs["calculation_method"] == "small_delivery_estimate":
+        elif self._calculation_method == "small_delivery_estimate":
             attrs["accuracy"] = "~75% (estimated)"
-        elif attrs["calculation_method"] == "large_delivery_estimate":
+        elif self._calculation_method == "large_delivery_estimate":
             attrs["accuracy"] = "~95% (estimated)"
         else:
             attrs["accuracy"] = "~90% (estimated)"
@@ -640,7 +637,7 @@ class PropaneUsedSinceDeliverySensor(AmeriGasSensorBase):
 class PropaneEnergyConsumptionSensor(AmeriGasSensorBase):
     """Energy consumption sensor (display only, not for Energy Dashboard).
     
-    v3.0.7: Calculate directly from coordinator data instead of entity lookup.
+    v3.0.8: Now uses _calculate_used_since_delivery() which includes pre-delivery level.
     """
     
     _attr_name = "Energy Consumption (Display)"
@@ -654,37 +651,13 @@ class PropaneEnergyConsumptionSensor(AmeriGasSensorBase):
     def native_value(self) -> float | None:
         """Return energy in cubic feet.
         
-        Calculate directly from coordinator data using same logic as UsedSinceDeliverySensor.
+        v3.0.8: Uses centralized helper that includes pre-delivery level.
         """
-        tank_size = self.coordinator.data.get("tank_size") or DEFAULT_TANK_SIZE
-        tank_level = self.coordinator.data.get("tank_level") or 0
+        used, _ = self._calculate_used_since_delivery()
         
-        # Bounds check
-        if tank_level < 0:
-            tank_level = 0
-        elif tank_level > 100:
-            tank_level = 100
+        if used is None:
+            return None
         
-        current = tank_size * (tank_level / 100)
-        last_delivery = self.coordinator.data.get("last_delivery_gallons") or 0
-        
-        # Calculate used amount (same logic as UsedSinceDeliverySensor)
-        if last_delivery > 0:
-            if last_delivery < 50:
-                estimated_before = tank_size * 0.65
-            else:
-                estimated_before = tank_size * 0.20
-            starting_level = estimated_before + last_delivery
-            if starting_level > tank_size:
-                starting_level = tank_size
-            used = starting_level - current
-        else:
-            full_fill_level = tank_size * DEFAULT_FILL_PERCENTAGE
-            used = full_fill_level - current
-        
-        used = max(0, used)
-        
-        # Convert to cubic feet
         return round(used * GALLONS_TO_CUBIC_FEET, 2)
     
     @property
@@ -695,7 +668,11 @@ class PropaneEnergyConsumptionSensor(AmeriGasSensorBase):
 
 
 class PropaneDailyAverageUsageSensor(AmeriGasSensorBase):
-    """Daily average usage sensor with v2.1.0 improvements."""
+    """Daily average usage sensor.
+    
+    v3.0.8: Now uses _calculate_daily_average() which internally uses
+    _calculate_used_since_delivery() with pre-delivery level support.
+    """
     
     _attr_name = "Daily Average Usage"
     _attr_unique_id = "propane_daily_average_usage"
@@ -705,47 +682,11 @@ class PropaneDailyAverageUsageSensor(AmeriGasSensorBase):
     
     @property
     def native_value(self) -> float | None:
-        """Return daily average usage."""
-        last_date = self.coordinator.data.get("last_delivery_date")
+        """Return daily average usage.
         
-        if not last_date:
-            return None
-        
-        # Calculate used amount directly
-        tank_size = self.coordinator.data.get("tank_size") or DEFAULT_TANK_SIZE
-        tank_level = self.coordinator.data.get("tank_level") or 0
-        
-        # Bounds check
-        if tank_level < 0:
-            tank_level = 0
-        elif tank_level > 100:
-            tank_level = 100
-        
-        current = tank_size * (tank_level / 100)
-        last_delivery = self.coordinator.data.get("last_delivery_gallons") or 0
-        
-        # Calculate used amount (same logic as UsedSinceDeliverySensor)
-        if last_delivery > 0:
-            estimated_before = tank_size * 0.20
-            starting_level = estimated_before + last_delivery
-            if starting_level > tank_size:
-                starting_level = tank_size
-            used = starting_level - current
-        else:
-            full_fill_level = tank_size * DEFAULT_FILL_PERCENTAGE
-            used = full_fill_level - current
-        
-        used = max(0, used)
-        
-        # Calculate days since delivery
-        now = dt_util.now()
-        days = (now - last_date).days
-        
-        # v2.1.0: Return None instead of 0 on same day as delivery
-        if days <= 0:
-            return None
-        
-        return round(used / days, 2)
+        v3.0.8: Uses centralized helper that includes pre-delivery level.
+        """
+        return self._calculate_daily_average()
     
     @property
     def available(self) -> bool:
@@ -758,13 +699,32 @@ class PropaneDailyAverageUsageSensor(AmeriGasSensorBase):
         days = (now - last_date).days
         tank_size = self.coordinator.data.get("tank_size")
         return days > 0 and tank_size and tank_size > 0
+    
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return extra attributes."""
+        last_date = self.coordinator.data.get("last_delivery_date")
+        used, method = self._calculate_used_since_delivery()
+        
+        attrs = {
+            "calculation_method": method,
+            "gallons_used": used,
+        }
+        
+        if last_date:
+            now = dt_util.now()
+            days = (now - last_date).days
+            attrs["days_since_delivery"] = days
+            if used and days > 0:
+                attrs["calculation"] = f"{used:.2f} gal ÷ {days} days = {used/days:.4f} gal/day"
+        
+        return attrs
 
 
 class PropaneDaysUntilEmptySensor(AmeriGasSensorBase):
     """Days until empty sensor.
     
-    v3.0.7: Always calculate days remaining regardless of usage rate.
-    Only unavailable if no usage data exists at all (no delivery ever recorded).
+    v3.0.8: Uses _calculate_daily_average() which now includes pre-delivery level.
     """
     
     _attr_name = "Days Until Empty"
@@ -775,32 +735,21 @@ class PropaneDaysUntilEmptySensor(AmeriGasSensorBase):
     
     @property
     def native_value(self) -> int | None:
-        """Return days until empty.
-        
-        Calculate days remaining based on current usage rate, no matter how small.
-        Only return None if we truly cannot calculate (no delivery data).
-        """
+        """Return days until empty."""
         remaining = self._calculate_gallons_remaining()
         avg_usage = self._calculate_daily_average()
         
-        # Return None only if we can't calculate at all
-        # (avg_usage is None means no delivery has ever been recorded)
         if remaining is None or avg_usage is None:
             return None
         
-        # If tank is empty, return 0
         if remaining <= 0:
             return 0
         
-        # If usage is effectively zero (< 0.001 gal/day), cap at 9999 days
-        # This prevents overflow while being honest about extremely low usage
         if avg_usage < 0.001:
             return 9999
         
-        # Always do the math - divide remaining by usage rate
         days = remaining / avg_usage
         
-        # Cap at reasonable maximum to prevent integer overflow
         if days > 9999:
             return 9999
         
@@ -808,18 +757,9 @@ class PropaneDaysUntilEmptySensor(AmeriGasSensorBase):
     
     @property
     def available(self) -> bool:
-        """Sensor is available if we have the data needed to calculate.
-        
-        Only unavailable if:
-        - No delivery has ever occurred (no avg_usage data)
-        - Tank size is unknown
-        - Current level is unknown
-        """
+        """Sensor is available if we have the data needed to calculate."""
         remaining = self._calculate_gallons_remaining()
         avg_usage = self._calculate_daily_average()
-        
-        # Available as long as we can calculate something
-        # avg_usage being None means no delivery date exists (no usage data ever)
         return remaining is not None and avg_usage is not None
     
     @property
@@ -827,20 +767,20 @@ class PropaneDaysUntilEmptySensor(AmeriGasSensorBase):
         """Return extra attributes."""
         remaining = self._calculate_gallons_remaining()
         avg_usage = self._calculate_daily_average()
+        _, method = self._calculate_used_since_delivery()
         
         attrs = {
             "gallons_remaining": remaining,
             "daily_average_usage": avg_usage,
+            "calculation_method": method,
         }
         
-        # Add helpful notes for edge cases
         if avg_usage is not None:
             if avg_usage < 0.001:
                 attrs["note"] = "Usage rate extremely low - showing 9999 days as practical maximum"
             elif avg_usage < 0.1:
                 attrs["note"] = f"Low usage rate: {avg_usage:.3f} gal/day"
         
-        # Show the calculation for transparency
         if remaining is not None and avg_usage is not None and avg_usage > 0:
             days_raw = remaining / avg_usage
             attrs["calculation"] = f"{remaining:.2f} gal ÷ {avg_usage:.2f} gal/day = {days_raw:.1f} days"
@@ -862,19 +802,11 @@ class PropaneCostPerGallonSensor(AmeriGasSensorBase):
     @property
     def native_value(self) -> float | None:
         """Return cost per gallon."""
-        payment = self.coordinator.data.get("last_payment_amount") or 0
-        delivery = self.coordinator.data.get("last_delivery_gallons") or 0
-        
-        # v2.1.0: Return None instead of 0
-        if delivery <= 0:
-            return None
-        
-        return round(payment / delivery, 2)
+        return self._calculate_cost_per_gallon()
     
     @property
     def available(self) -> bool:
         """Return availability."""
-        payment = self.coordinator.data.get("last_payment_amount") or 0
         delivery = self.coordinator.data.get("last_delivery_gallons") or 0
         return delivery > 0
 
@@ -891,19 +823,16 @@ class PropaneCostPerCubicFootSensor(AmeriGasSensorBase):
     @property
     def native_value(self) -> float | None:
         """Return cost per cubic foot."""
-        payment = self.coordinator.data.get("last_payment_amount") or 0
-        delivery = self.coordinator.data.get("last_delivery_gallons") or 0
+        cost_per_gallon = self._calculate_cost_per_gallon()
         
-        if delivery <= 0:
+        if cost_per_gallon is None:
             return None
         
-        cost_per_gallon = payment / delivery
         return round(cost_per_gallon / GALLONS_TO_CUBIC_FEET, 4)
     
     @property
     def available(self) -> bool:
         """Return availability."""
-        payment = self.coordinator.data.get("last_payment_amount") or 0
         delivery = self.coordinator.data.get("last_delivery_gallons") or 0
         return delivery > 0
 
@@ -911,8 +840,7 @@ class PropaneCostPerCubicFootSensor(AmeriGasSensorBase):
 class PropaneCostSinceDeliverySensor(AmeriGasSensorBase):
     """Cost since delivery sensor.
     
-    v3.0.7: Now references the actual Used Since Delivery sensor to get accurate
-    gallons used (which includes pre-delivery level from delivery tracker).
+    v3.0.8: Uses centralized _calculate_used_since_delivery() helper.
     """
     
     _attr_name = "Cost Since Last Delivery"
@@ -922,53 +850,10 @@ class PropaneCostSinceDeliverySensor(AmeriGasSensorBase):
     _attr_state_class = SensorStateClass.TOTAL
     _attr_icon = "mdi:cash"
     
-    def __init__(self, coordinator: DataUpdateCoordinator, entry_id: str) -> None:
-        """Initialize the sensor."""
-        super().__init__(coordinator, entry_id)
-        self._used_since_delivery_entity_id = None
-    
-    async def async_added_to_hass(self) -> None:
-        """Handle entity added to hass."""
-        await super().async_added_to_hass()
-        
-        # Find the Used Since Delivery sensor to get accurate gallons
-        try:
-            from homeassistant.helpers import entity_registry as er
-            
-            entity_reg = er.async_get(self.hass)
-            
-            # Find the used since delivery sensor by unique_id pattern
-            for entity in entity_reg.entities.values():
-                if entity.unique_id and entity.unique_id.endswith("_used_since_last_delivery"):
-                    if entity.platform == DOMAIN:
-                        self._used_since_delivery_entity_id = entity.entity_id
-                        _LOGGER.debug(f"Cost sensor found used since delivery entity: {self._used_since_delivery_entity_id}")
-                        break
-        except Exception as e:
-            _LOGGER.error(f"Error finding used since delivery sensor: {e}")
-    
     @property
     def native_value(self) -> float | None:
-        """Return cost since delivery.
-        
-        v3.0.7: Gets gallons from actual Used Since Delivery sensor (which uses
-        pre-delivery level) instead of recalculating with estimation.
-        """
-        # Get used gallons from the actual sensor (which uses pre-delivery level!)
-        used = None
-        
-        if self._used_since_delivery_entity_id:
-            if state := self.hass.states.get(self._used_since_delivery_entity_id):
-                try:
-                    used = float(state.state)
-                except (ValueError, TypeError):
-                    _LOGGER.debug(f"Could not parse used since delivery state: {state.state}")
-        
-        # Fallback to helper method if sensor not found
-        if used is None:
-            used = self._calculate_used_since_delivery()
-        
-        # Get cost per gallon
+        """Return cost since delivery."""
+        used, _ = self._calculate_used_since_delivery()
         cost = self._calculate_cost_per_gallon()
         
         if used is None or cost is None or cost == 0:
@@ -979,39 +864,20 @@ class PropaneCostSinceDeliverySensor(AmeriGasSensorBase):
     @property
     def available(self) -> bool:
         """Return availability."""
-        # Available if we can get both used gallons and cost
-        used = None
-        if self._used_since_delivery_entity_id:
-            if state := self.hass.states.get(self._used_since_delivery_entity_id):
-                try:
-                    used = float(state.state)
-                except (ValueError, TypeError):
-                    pass
-        
-        if used is None:
-            used = self._calculate_used_since_delivery()
-        
+        used, _ = self._calculate_used_since_delivery()
         cost = self._calculate_cost_per_gallon()
-        
         return used is not None and cost is not None and cost > 0
     
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return extra attributes."""
-        used = None
-        if self._used_since_delivery_entity_id:
-            if state := self.hass.states.get(self._used_since_delivery_entity_id):
-                try:
-                    used = float(state.state)
-                except (ValueError, TypeError):
-                    pass
-        
+        used, method = self._calculate_used_since_delivery()
         cost = self._calculate_cost_per_gallon()
         
         attrs = {
             "gallons_used": used,
             "cost_per_gallon": cost,
-            "data_source": "used_since_delivery_sensor" if self._used_since_delivery_entity_id else "estimated",
+            "calculation_method": method,
         }
         
         if used and cost:
@@ -1021,7 +887,10 @@ class PropaneCostSinceDeliverySensor(AmeriGasSensorBase):
 
 
 class PropaneEstimatedRefillCostSensor(AmeriGasSensorBase):
-    """Estimated refill cost sensor."""
+    """Estimated refill cost sensor.
+    
+    v3.0.8: Uses centralized helpers for consistent calculations.
+    """
     
     _attr_name = "Estimated Refill Cost"
     _attr_unique_id = "propane_estimated_refill_cost"
@@ -1031,11 +900,7 @@ class PropaneEstimatedRefillCostSensor(AmeriGasSensorBase):
     
     @property
     def native_value(self) -> float | None:
-        """Return estimated refill cost.
-        
-        v3.0.5: Uses realistic 80% maximum fill level instead of 100%.
-        Most propane companies fill to 80% for safety (thermal expansion).
-        """
+        """Return estimated refill cost."""
         tank_size = self.coordinator.data.get("tank_size") or DEFAULT_TANK_SIZE
         remaining = self._calculate_gallons_remaining()
         cost = self._calculate_cost_per_gallon()
@@ -1043,12 +908,9 @@ class PropaneEstimatedRefillCostSensor(AmeriGasSensorBase):
         if remaining is None or cost is None:
             return None
         
-        # v3.0.5: Use 80% maximum fill level (industry standard)
         max_fill_level = tank_size * 0.80
-        
         needed = max_fill_level - remaining
         
-        # Bounds check
         if needed < 0:
             needed = 0
         elif needed > tank_size:
@@ -1103,8 +965,7 @@ class PropaneDaysSinceDeliverySensor(AmeriGasSensorBase):
 class PropaneDaysRemainingDifferenceSensor(AmeriGasSensorBase):
     """Days remaining difference sensor.
     
-    v3.0.7: Calculate difference regardless of usage rate.
-    Only unavailable if no usage data exists.
+    v3.0.8: Uses centralized helpers for consistent calculations.
     """
     
     _attr_name = "Days Remaining Difference"
@@ -1114,41 +975,31 @@ class PropaneDaysRemainingDifferenceSensor(AmeriGasSensorBase):
     
     @property
     def native_value(self) -> int | None:
-        """Return difference in estimates.
-        
-        Calculates the difference between your calculated estimate and AmeriGas's estimate.
-        Always does the math, regardless of usage rate.
-        """
+        """Return difference in estimates."""
         amerigas = self.coordinator.data.get("days_remaining") or 0
         
         remaining = self._calculate_gallons_remaining()
         avg_usage = self._calculate_daily_average()
         
-        # Can't calculate without data
         if remaining is None or avg_usage is None:
             return None
         
-        # Calculate our estimate (same logic as Days Until Empty)
         if remaining <= 0:
             mine = 0
         elif avg_usage < 0.001:
-            mine = 9999  # Cap at same maximum as Days Until Empty
+            mine = 9999
         else:
             days = remaining / avg_usage
-            mine = min(round(days), 9999)  # Cap at 9999
+            mine = min(round(days), 9999)
         
         return mine - amerigas
     
     @property
     def available(self) -> bool:
-        """Available if we have data to calculate.
-        
-        Only unavailable if no delivery has ever occurred or AmeriGas data missing.
-        """
+        """Available if we have data to calculate."""
         amerigas = self.coordinator.data.get("days_remaining")
         remaining = self._calculate_gallons_remaining()
         avg_usage = self._calculate_daily_average()
-        
         return amerigas is not None and remaining is not None and avg_usage is not None
     
     @property
@@ -1156,6 +1007,7 @@ class PropaneDaysRemainingDifferenceSensor(AmeriGasSensorBase):
         """Return extra attributes."""
         remaining = self._calculate_gallons_remaining()
         avg_usage = self._calculate_daily_average()
+        _, method = self._calculate_used_since_delivery()
         
         mine = None
         if remaining is not None and avg_usage is not None:
@@ -1172,9 +1024,9 @@ class PropaneDaysRemainingDifferenceSensor(AmeriGasSensorBase):
             "your_estimate": mine,
             "gallons_remaining": remaining,
             "daily_average_usage": avg_usage,
+            "calculation_method": method,
         }
         
-        # Show calculation for transparency
         if remaining is not None and avg_usage is not None and avg_usage > 0:
             days_raw = remaining / avg_usage
             attrs["calculation"] = f"{remaining:.2f} gal ÷ {avg_usage:.2f} gal/day = {days_raw:.1f} days"
@@ -1192,10 +1044,7 @@ class PropaneDaysRemainingDifferenceSensor(AmeriGasSensorBase):
 # =============================================================================
 
 class PropaneLifetimeGallonsSensor(AmeriGasSensorBase, RestoreEntity):
-    """Lifetime gallons sensor with robust state restoration.
-    
-    v3.0.7: Fixed critical bug where lifetime would reset to 0 on restart.
-    """
+    """Lifetime gallons sensor with robust state restoration."""
     
     _attr_name = "Lifetime Gallons"
     _attr_unique_id = "propane_lifetime_gallons"
@@ -1217,32 +1066,21 @@ class PropaneLifetimeGallonsSensor(AmeriGasSensorBase, RestoreEntity):
         """Restore state when added to hass."""
         await super().async_added_to_hass()
         
-        # Restore previous state
         if (last_state := await self.async_get_last_state()) is not None:
-            # Only restore if state is a valid number
             if last_state.state not in (None, "", "unknown", "unavailable"):
                 try:
                     restored_value = float(last_state.state)
-                    # Sanity check: lifetime should never decrease
                     if restored_value >= 0:
                         self._lifetime_total = restored_value
                         _LOGGER.info(f"Restored lifetime gallons: {self._lifetime_total}")
-                    else:
-                        _LOGGER.warning(f"Restored negative lifetime value {restored_value}, keeping at 0")
                 except (ValueError, TypeError) as e:
-                    _LOGGER.warning(f"Could not restore lifetime gallons from state '{last_state.state}': {e}")
-                    # Don't reset to 0 - use backup from attributes if available
-                    pass
+                    _LOGGER.warning(f"Could not restore lifetime gallons: {e}")
             
-            # v3.0.7: Restore attributes including previous_gallons
             if last_state.attributes:
                 try:
-                    # Restore previous_gallons (CRITICAL for restart!)
                     if "previous_gallons" in last_state.attributes:
                         self._previous_gallons = float(last_state.attributes["previous_gallons"])
-                        _LOGGER.debug(f"Restored previous_gallons: {self._previous_gallons}")
                     
-                    # Parse last_consumption_event back to datetime if it's a string
                     last_event = last_state.attributes.get("last_consumption_event")
                     if last_event and last_event != "never":
                         try:
@@ -1254,7 +1092,6 @@ class PropaneLifetimeGallonsSensor(AmeriGasSensorBase, RestoreEntity):
                     self._ignored_triggers = last_state.attributes.get("ignored_triggers", 0)
                     self._largest_consumption = last_state.attributes.get("largest_consumption", 0.0)
                     
-                    # v3.0.7: Use backup if main state was corrupted
                     if self._lifetime_total == 0.0 and "last_valid_state" in last_state.attributes:
                         backup = last_state.attributes.get("last_valid_state")
                         if backup and backup > 0:
@@ -1263,65 +1100,42 @@ class PropaneLifetimeGallonsSensor(AmeriGasSensorBase, RestoreEntity):
                 
                 except Exception as e:
                     _LOGGER.error(f"Error restoring lifetime sensor attributes: {e}")
-        else:
-            _LOGGER.info("No previous state found for lifetime sensor - starting fresh at 0")
         
-        # Set up listener for gallons remaining changes
         self.async_on_remove(
             self.coordinator.async_add_listener(self._handle_coordinator_update)
         )
         
-        # v3.0.7: CRITICAL FIX - Process existing coordinator data on startup
-        # This prevents missing the initial state during startup race condition
-        # where coordinator loads data before listener is registered
         if self.coordinator.last_update_success and self.coordinator.data:
-            _LOGGER.info("Processing existing coordinator data on startup")
             self._handle_coordinator_update()
     
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
-        # Get current gallons remaining using helper method
         current_gallons = self._calculate_gallons_remaining()
         if current_gallons is None:
             self.async_write_ha_state()
             return
         
-        # First run - just store current value
         if self._previous_gallons is None:
             self._previous_gallons = current_gallons
-            _LOGGER.debug(f"Lifetime sensor initialized: previous_gallons={current_gallons}")
             self.async_write_ha_state()
             return
         
-        # Calculate difference
         diff = self._previous_gallons - current_gallons
-        
-        # Increment total triggers
         self._total_triggers += 1
         
-        # Noise filter - only track if > threshold
         if diff > NOISE_THRESHOLD_GALLONS:
-            # Consumption occurred
             self._lifetime_total += diff
             self._previous_gallons = current_gallons
-            
-            # Update diagnostic attributes
             self._last_consumption_event = dt_util.now()
             if diff > self._largest_consumption:
                 self._largest_consumption = diff
-            
             _LOGGER.info(f"Lifetime consumption: +{diff:.2f} gal, total now {self._lifetime_total:.2f} gal")
         elif diff > 0:
-            # Small change filtered as noise
             self._ignored_triggers += 1
-            # Don't update previous_gallons - wait for larger change
-            _LOGGER.debug(f"Ignored small change: {diff:.2f} gal (below {NOISE_THRESHOLD_GALLONS} threshold)")
         else:
-            # Level went up (delivery or thermal expansion)
-            # Update previous but don't add to lifetime
-            if diff < -1.0:  # Delivery
-                _LOGGER.info(f"Delivery detected: +{abs(diff):.2f} gal, lifetime unchanged at {self._lifetime_total:.2f}")
+            if diff < -1.0:
+                _LOGGER.info(f"Delivery detected: +{abs(diff):.2f} gal")
             self._previous_gallons = current_gallons
         
         self.async_write_ha_state()
@@ -1334,35 +1148,27 @@ class PropaneLifetimeGallonsSensor(AmeriGasSensorBase, RestoreEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return extra attributes."""
-        # Handle last_consumption_event - could be datetime or string
         if self._last_consumption_event is None:
             last_event = "never"
         elif isinstance(self._last_consumption_event, str):
             last_event = self._last_consumption_event
         else:
-            # It's a datetime object
             last_event = self._last_consumption_event.isoformat()
         
         return {
-            # v3.0.7: State preservation backup
             "last_valid_state": self._lifetime_total,
-            # v3.0.7: CRITICAL - Store previous_gallons for restart!
             "previous_gallons": self._previous_gallons if self._previous_gallons is not None else 0.0,
-            # Diagnostic attributes
             "last_consumption_event": last_event,
             "total_triggers": self._total_triggers,
             "ignored_triggers": self._ignored_triggers,
             "largest_consumption": round(self._largest_consumption, 2),
             "threshold_gallons": NOISE_THRESHOLD_GALLONS,
-            "version": "3.0.7",
+            "version": "3.0.8",
         }
 
 
 class PropaneLifetimeEnergySensor(AmeriGasSensorBase):
-    """Lifetime energy sensor for Energy Dashboard.
-    
-    v3.0.7: Return 0.0 instead of None for better Energy Dashboard compatibility.
-    """
+    """Lifetime energy sensor for Energy Dashboard."""
     
     _attr_name = "Lifetime Energy"
     _attr_unique_id = "propane_lifetime_energy"
@@ -1379,15 +1185,9 @@ class PropaneLifetimeEnergySensor(AmeriGasSensorBase):
     
     @property
     def native_value(self) -> float:
-        """Return lifetime energy in cubic feet.
-        
-        Math: gallons × 36.3888 = cubic feet
-        Returns 0.0 instead of None for better Energy Dashboard compatibility.
-        """
-        # Get directly from the lifetime gallons sensor instance
+        """Return lifetime energy in cubic feet."""
         gallons = self._lifetime_gallons_sensor.native_value
         
-        # Return 0.0 instead of None for Energy Dashboard
         if gallons is None or gallons == 0:
             return 0.0
         
@@ -1408,5 +1208,5 @@ class PropaneLifetimeEnergySensor(AmeriGasSensorBase):
             "conversion_factor": GALLONS_TO_CUBIC_FEET,
             "lifetime_gallons": gallons if gallons is not None else 0.0,
             "formula": f"{gallons if gallons else 0.0} gal × {GALLONS_TO_CUBIC_FEET} ft³/gal",
-            "version": "3.0.7",
+            "version": "3.0.8",
         }
