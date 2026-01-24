@@ -110,7 +110,7 @@ class AmeriGasSensorBase(CoordinatorEntity, SensorEntity):
     async def async_added_to_hass(self) -> None:
         """Set up listener for pre-delivery level changes.
         
-        v3.0.8: All sensors that depend on usage calculations need to
+        v3.0.7: All sensors that depend on usage calculations need to
         recalculate when the pre-delivery level changes, not just when
         the coordinator updates.
         """
@@ -150,7 +150,7 @@ class AmeriGasSensorBase(CoordinatorEntity, SensorEntity):
     def _get_pre_delivery_level(self) -> float | None:
         """Get the pre-delivery level from the number entity.
         
-        v3.0.8: Centralized helper method for all sensors to use.
+        v3.0.7: Centralized helper method for all sensors to use.
         Returns the auto-captured pre-delivery level if available,
         or None if not found or not set.
         """
@@ -209,7 +209,7 @@ class AmeriGasSensorBase(CoordinatorEntity, SensorEntity):
     def _calculate_used_since_delivery(self) -> tuple[float | None, str]:
         """Calculate gallons used since delivery from coordinator data.
         
-        v3.0.8: Now uses auto-captured pre-delivery level if available.
+        v3.0.7: Now uses auto-captured pre-delivery level if available.
         Returns tuple of (gallons_used, calculation_method).
         """
         tank_size = self.coordinator.data.get("tank_size") or DEFAULT_TANK_SIZE
@@ -224,7 +224,7 @@ class AmeriGasSensorBase(CoordinatorEntity, SensorEntity):
         current = tank_size * (tank_level / 100)
         last_delivery = self.coordinator.data.get("last_delivery_gallons") or 0
         
-        # v3.0.8: Check for auto-captured pre-delivery level
+        # v3.0.7: Check for auto-captured pre-delivery level
         pre_delivery_level = self._get_pre_delivery_level()
         
         if pre_delivery_level and pre_delivery_level > 0:
@@ -256,7 +256,7 @@ class AmeriGasSensorBase(CoordinatorEntity, SensorEntity):
     def _calculate_daily_average(self) -> float | None:
         """Calculate daily average usage from coordinator data.
         
-        v3.0.8: Now uses _calculate_used_since_delivery which includes pre-delivery level.
+        v3.0.7: Now uses _calculate_used_since_delivery which includes pre-delivery level.
         """
         last_date = self.coordinator.data.get("last_delivery_date")
         if not last_date:
@@ -567,9 +567,9 @@ class PropaneGallonsRemainingSensor(AmeriGasSensorBase):
 
 
 class PropaneUsedSinceDeliverySensor(AmeriGasSensorBase):
-    """Used since delivery sensor with v3.0.8 improvements.
+    """Used since delivery sensor with v3.0.7 improvements.
     
-    v3.0.8: Now uses the centralized _calculate_used_since_delivery() helper
+    v3.0.7: Now uses the centralized _calculate_used_since_delivery() helper
     which properly looks up the pre-delivery level.
     """
     
@@ -637,7 +637,7 @@ class PropaneUsedSinceDeliverySensor(AmeriGasSensorBase):
 class PropaneEnergyConsumptionSensor(AmeriGasSensorBase):
     """Energy consumption sensor (display only, not for Energy Dashboard).
     
-    v3.0.8: Now uses _calculate_used_since_delivery() which includes pre-delivery level.
+    v3.0.7: Now uses _calculate_used_since_delivery() which includes pre-delivery level.
     """
     
     _attr_name = "Energy Consumption (Display)"
@@ -651,7 +651,7 @@ class PropaneEnergyConsumptionSensor(AmeriGasSensorBase):
     def native_value(self) -> float | None:
         """Return energy in cubic feet.
         
-        v3.0.8: Uses centralized helper that includes pre-delivery level.
+        v3.0.7: Uses centralized helper that includes pre-delivery level.
         """
         used, _ = self._calculate_used_since_delivery()
         
@@ -670,7 +670,7 @@ class PropaneEnergyConsumptionSensor(AmeriGasSensorBase):
 class PropaneDailyAverageUsageSensor(AmeriGasSensorBase):
     """Daily average usage sensor.
     
-    v3.0.8: Now uses _calculate_daily_average() which internally uses
+    v3.0.7: Now uses _calculate_daily_average() which internally uses
     _calculate_used_since_delivery() with pre-delivery level support.
     """
     
@@ -684,7 +684,7 @@ class PropaneDailyAverageUsageSensor(AmeriGasSensorBase):
     def native_value(self) -> float | None:
         """Return daily average usage.
         
-        v3.0.8: Uses centralized helper that includes pre-delivery level.
+        v3.0.7: Uses centralized helper that includes pre-delivery level.
         """
         return self._calculate_daily_average()
     
@@ -724,7 +724,7 @@ class PropaneDailyAverageUsageSensor(AmeriGasSensorBase):
 class PropaneDaysUntilEmptySensor(AmeriGasSensorBase):
     """Days until empty sensor.
     
-    v3.0.8: Uses _calculate_daily_average() which now includes pre-delivery level.
+    v3.0.7: Uses _calculate_daily_average() which now includes pre-delivery level.
     """
     
     _attr_name = "Days Until Empty"
@@ -840,7 +840,7 @@ class PropaneCostPerCubicFootSensor(AmeriGasSensorBase):
 class PropaneCostSinceDeliverySensor(AmeriGasSensorBase):
     """Cost since delivery sensor.
     
-    v3.0.8: Uses centralized _calculate_used_since_delivery() helper.
+    v3.0.7: Uses centralized _calculate_used_since_delivery() helper.
     """
     
     _attr_name = "Cost Since Last Delivery"
@@ -889,7 +889,7 @@ class PropaneCostSinceDeliverySensor(AmeriGasSensorBase):
 class PropaneEstimatedRefillCostSensor(AmeriGasSensorBase):
     """Estimated refill cost sensor.
     
-    v3.0.8: Uses centralized helpers for consistent calculations.
+    v3.0.7: Uses centralized helpers for consistent calculations.
     """
     
     _attr_name = "Estimated Refill Cost"
@@ -965,7 +965,7 @@ class PropaneDaysSinceDeliverySensor(AmeriGasSensorBase):
 class PropaneDaysRemainingDifferenceSensor(AmeriGasSensorBase):
     """Days remaining difference sensor.
     
-    v3.0.8: Uses centralized helpers for consistent calculations.
+    v3.0.7: Uses centralized helpers for consistent calculations.
     """
     
     _attr_name = "Days Remaining Difference"
@@ -1163,7 +1163,7 @@ class PropaneLifetimeGallonsSensor(AmeriGasSensorBase, RestoreEntity):
             "ignored_triggers": self._ignored_triggers,
             "largest_consumption": round(self._largest_consumption, 2),
             "threshold_gallons": NOISE_THRESHOLD_GALLONS,
-            "version": "3.0.8",
+            "version": "3.0.7",
         }
 
 
@@ -1208,5 +1208,5 @@ class PropaneLifetimeEnergySensor(AmeriGasSensorBase):
             "conversion_factor": GALLONS_TO_CUBIC_FEET,
             "lifetime_gallons": gallons if gallons is not None else 0.0,
             "formula": f"{gallons if gallons else 0.0} gal × {GALLONS_TO_CUBIC_FEET} ft³/gal",
-            "version": "3.0.8",
+            "version": "3.0.7",
         }
