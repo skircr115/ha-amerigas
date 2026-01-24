@@ -909,7 +909,11 @@ class PropaneCostPerCubicFootSensor(AmeriGasSensorBase):
 
 
 class PropaneCostSinceDeliverySensor(AmeriGasSensorBase):
-    """Cost since delivery sensor."""
+    """Cost since delivery sensor.
+    
+    v3.0.7: Now references the actual Used Since Delivery sensor to get accurate
+    gallons used (which includes pre-delivery level from delivery tracker).
+    """
     
     _attr_name = "Cost Since Last Delivery"
     _attr_unique_id = "propane_cost_since_last_delivery"
@@ -918,16 +922,102 @@ class PropaneCostSinceDeliverySensor(AmeriGasSensorBase):
     _attr_state_class = SensorStateClass.TOTAL
     _attr_icon = "mdi:cash"
     
+    def __init__(self, coordinator: DataUpdateCoordinator, entry_id: str) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, entry_id)
+        self._used_since_delivery_entity_id = None
+    
+    async def async_added_to_hass(self) -> None:
+        """Handle entity added to hass."""
+        await super().async_added_to_hass()
+        
+        # Find the Used Since Delivery sensor to get accurate gallons
+        try:
+            from homeassistant.helpers import entity_registry as er
+            
+            entity_reg = er.async_get(self.hass)
+            
+            # Find the used since delivery sensor by unique_id pattern
+            for entity in entity_reg.entities.values():
+                if entity.unique_id and entity.unique_id.endswith("_used_since_last_delivery"):
+                    if entity.platform == DOMAIN:
+                        self._used_since_delivery_entity_id = entity.entity_id
+                        _LOGGER.debug(f"Cost sensor found used since delivery entity: {self._used_since_delivery_entity_id}")
+                        break
+        except Exception as e:
+            _LOGGER.error(f"Error finding used since delivery sensor: {e}")
+    
     @property
     def native_value(self) -> float | None:
-        """Return cost since delivery."""
-        used = self._calculate_used_since_delivery()
+        """Return cost since delivery.
+        
+        v3.0.7: Gets gallons from actual Used Since Delivery sensor (which uses
+        pre-delivery level) instead of recalculating with estimation.
+        """
+        # Get used gallons from the actual sensor (which uses pre-delivery level!)
+        used = None
+        
+        if self._used_since_delivery_entity_id:
+            if state := self.hass.states.get(self._used_since_delivery_entity_id):
+                try:
+                    used = float(state.state)
+                except (ValueError, TypeError):
+                    _LOGGER.debug(f"Could not parse used since delivery state: {state.state}")
+        
+        # Fallback to helper method if sensor not found
+        if used is None:
+            used = self._calculate_used_since_delivery()
+        
+        # Get cost per gallon
         cost = self._calculate_cost_per_gallon()
         
-        if used is None or cost is None:
+        if used is None or cost is None or cost == 0:
             return None
         
         return round(used * cost, 2)
+    
+    @property
+    def available(self) -> bool:
+        """Return availability."""
+        # Available if we can get both used gallons and cost
+        used = None
+        if self._used_since_delivery_entity_id:
+            if state := self.hass.states.get(self._used_since_delivery_entity_id):
+                try:
+                    used = float(state.state)
+                except (ValueError, TypeError):
+                    pass
+        
+        if used is None:
+            used = self._calculate_used_since_delivery()
+        
+        cost = self._calculate_cost_per_gallon()
+        
+        return used is not None and cost is not None and cost > 0
+    
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return extra attributes."""
+        used = None
+        if self._used_since_delivery_entity_id:
+            if state := self.hass.states.get(self._used_since_delivery_entity_id):
+                try:
+                    used = float(state.state)
+                except (ValueError, TypeError):
+                    pass
+        
+        cost = self._calculate_cost_per_gallon()
+        
+        attrs = {
+            "gallons_used": used,
+            "cost_per_gallon": cost,
+            "data_source": "used_since_delivery_sensor" if self._used_since_delivery_entity_id else "estimated",
+        }
+        
+        if used and cost:
+            attrs["calculation"] = f"{used:.2f} gal × ${cost:.2f}/gal = ${used * cost:.2f}"
+        
+        return attrs
 
 
 class PropaneEstimatedRefillCostSensor(AmeriGasSensorBase):
@@ -1102,7 +1192,10 @@ class PropaneDaysRemainingDifferenceSensor(AmeriGasSensorBase):
 # =============================================================================
 
 class PropaneLifetimeGallonsSensor(AmeriGasSensorBase, RestoreEntity):
-    """Lifetime gallons sensor with v2.1.0 enhancements."""
+    """Lifetime gallons sensor with robust state restoration.
+    
+    v3.0.7: Fixed critical bug where lifetime would reset to 0 on restart.
+    """
     
     _attr_name = "Lifetime Gallons"
     _attr_unique_id = "propane_lifetime_gallons"
@@ -1126,37 +1219,64 @@ class PropaneLifetimeGallonsSensor(AmeriGasSensorBase, RestoreEntity):
         
         # Restore previous state
         if (last_state := await self.async_get_last_state()) is not None:
-            try:
-                self._lifetime_total = float(last_state.state)
-                
-                # v2.1.0: Restore diagnostic attributes
-                if last_state.attributes:
+            # Only restore if state is a valid number
+            if last_state.state not in (None, "", "unknown", "unavailable"):
+                try:
+                    restored_value = float(last_state.state)
+                    # Sanity check: lifetime should never decrease
+                    if restored_value >= 0:
+                        self._lifetime_total = restored_value
+                        _LOGGER.info(f"Restored lifetime gallons: {self._lifetime_total}")
+                    else:
+                        _LOGGER.warning(f"Restored negative lifetime value {restored_value}, keeping at 0")
+                except (ValueError, TypeError) as e:
+                    _LOGGER.warning(f"Could not restore lifetime gallons from state '{last_state.state}': {e}")
+                    # Don't reset to 0 - use backup from attributes if available
+                    pass
+            
+            # v3.0.7: Restore attributes including previous_gallons
+            if last_state.attributes:
+                try:
+                    # Restore previous_gallons (CRITICAL for restart!)
+                    if "previous_gallons" in last_state.attributes:
+                        self._previous_gallons = float(last_state.attributes["previous_gallons"])
+                        _LOGGER.debug(f"Restored previous_gallons: {self._previous_gallons}")
+                    
                     # Parse last_consumption_event back to datetime if it's a string
                     last_event = last_state.attributes.get("last_consumption_event")
                     if last_event and last_event != "never":
                         try:
-                            # Parse ISO format string back to datetime
                             self._last_consumption_event = datetime.fromisoformat(last_event)
                         except (ValueError, TypeError):
                             self._last_consumption_event = None
-                    else:
-                        self._last_consumption_event = None
                     
                     self._total_triggers = last_state.attributes.get("total_triggers", 0)
                     self._ignored_triggers = last_state.attributes.get("ignored_triggers", 0)
                     self._largest_consumption = last_state.attributes.get("largest_consumption", 0.0)
-                    # v2.1.0: State preservation backup
-                    if "last_valid_state" in last_state.attributes:
+                    
+                    # v3.0.7: Use backup if main state was corrupted
+                    if self._lifetime_total == 0.0 and "last_valid_state" in last_state.attributes:
                         backup = last_state.attributes.get("last_valid_state")
-                        if backup and self._lifetime_total == 0:
+                        if backup and backup > 0:
                             self._lifetime_total = float(backup)
-            except (ValueError, TypeError):
-                self._lifetime_total = 0.0
+                            _LOGGER.warning(f"Main state was 0, restored from backup: {self._lifetime_total}")
+                
+                except Exception as e:
+                    _LOGGER.error(f"Error restoring lifetime sensor attributes: {e}")
+        else:
+            _LOGGER.info("No previous state found for lifetime sensor - starting fresh at 0")
         
         # Set up listener for gallons remaining changes
         self.async_on_remove(
             self.coordinator.async_add_listener(self._handle_coordinator_update)
         )
+        
+        # v3.0.7: CRITICAL FIX - Process existing coordinator data on startup
+        # This prevents missing the initial state during startup race condition
+        # where coordinator loads data before listener is registered
+        if self.coordinator.last_update_success and self.coordinator.data:
+            _LOGGER.info("Processing existing coordinator data on startup")
+            self._handle_coordinator_update()
     
     @callback
     def _handle_coordinator_update(self) -> None:
@@ -1170,32 +1290,38 @@ class PropaneLifetimeGallonsSensor(AmeriGasSensorBase, RestoreEntity):
         # First run - just store current value
         if self._previous_gallons is None:
             self._previous_gallons = current_gallons
+            _LOGGER.debug(f"Lifetime sensor initialized: previous_gallons={current_gallons}")
             self.async_write_ha_state()
             return
         
         # Calculate difference
         diff = self._previous_gallons - current_gallons
         
-        # v2.1.0: Increment total triggers
+        # Increment total triggers
         self._total_triggers += 1
         
-        # v2.0.1: Noise filter - only track if > threshold
+        # Noise filter - only track if > threshold
         if diff > NOISE_THRESHOLD_GALLONS:
             # Consumption occurred
             self._lifetime_total += diff
             self._previous_gallons = current_gallons
             
-            # v2.1.0: Update diagnostic attributes
+            # Update diagnostic attributes
             self._last_consumption_event = dt_util.now()
             if diff > self._largest_consumption:
                 self._largest_consumption = diff
+            
+            _LOGGER.info(f"Lifetime consumption: +{diff:.2f} gal, total now {self._lifetime_total:.2f} gal")
         elif diff > 0:
-            # v2.1.0: Small change filtered as noise
+            # Small change filtered as noise
             self._ignored_triggers += 1
             # Don't update previous_gallons - wait for larger change
+            _LOGGER.debug(f"Ignored small change: {diff:.2f} gal (below {NOISE_THRESHOLD_GALLONS} threshold)")
         else:
             # Level went up (delivery or thermal expansion)
             # Update previous but don't add to lifetime
+            if diff < -1.0:  # Delivery
+                _LOGGER.info(f"Delivery detected: +{abs(diff):.2f} gal, lifetime unchanged at {self._lifetime_total:.2f}")
             self._previous_gallons = current_gallons
         
         self.async_write_ha_state()
@@ -1207,7 +1333,7 @@ class PropaneLifetimeGallonsSensor(AmeriGasSensorBase, RestoreEntity):
     
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return extra attributes (v2.1.0 enhancements)."""
+        """Return extra attributes."""
         # Handle last_consumption_event - could be datetime or string
         if self._last_consumption_event is None:
             last_event = "never"
@@ -1218,9 +1344,11 @@ class PropaneLifetimeGallonsSensor(AmeriGasSensorBase, RestoreEntity):
             last_event = self._last_consumption_event.isoformat()
         
         return {
-            # v2.1.0: State preservation backup
+            # v3.0.7: State preservation backup
             "last_valid_state": self._lifetime_total,
-            # v2.1.0: Diagnostic attributes
+            # v3.0.7: CRITICAL - Store previous_gallons for restart!
+            "previous_gallons": self._previous_gallons if self._previous_gallons is not None else 0.0,
+            # Diagnostic attributes
             "last_consumption_event": last_event,
             "total_triggers": self._total_triggers,
             "ignored_triggers": self._ignored_triggers,
