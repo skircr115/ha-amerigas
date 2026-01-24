@@ -7,42 +7,33 @@
 
 > **HACS custom component** for monitoring your AmeriGas propane account. Track tank levels, deliveries, payments, and integrate with the Energy Dashboard.
 
-## ✨ What's New in v3.0.6
+## ✨ What's New in v3.0.7
 
-### 🕐 Cron-Based Refresh Schedule
-**Predictable refresh times at 00:00, 06:00, 12:00, and 18:00!**
+### 🐛 Critical Race Condition Fix
+**Fixed sensors not updating when pre-delivery level changes!**
 
-- ✅ Fixed schedule instead of relative intervals
-- ✅ Always know when your data will update
-- ✅ No drift after HA restarts
-- ✅ Still refreshes on startup for immediate data
+Previously, only the "Used Since Delivery" sensor responded to pre-delivery level changes. Other sensors (Cost Since Delivery, Energy Consumption, Daily Average Usage, Days Until Empty) continued using stale estimated values until the next 6-hour coordinator refresh.
 
-### 🔧 CRITICAL: Fixed Unclosed Connection Error
-**Resolved the `Error doing job: Unclosed connection (None)` error!**
+**Now fixed:** All dependent sensors immediately recalculate when you set the pre-delivery level.
 
-The aiohttp session is now properly closed after each API fetch:
-- ✅ Session cleaned up in `api.py` after data fetch
-- ✅ Session cleaned up in `config_flow.py` after validation
-- ✅ No more connection resource leaks
-- ✅ Proper cleanup on integration unload
+### 🔧 Fixed Sensors
+- ✅ **Daily Average Usage** - No longer shows 0.0000 gal/day
+- ✅ **Cost Since Last Delivery** - Now uses correct usage value
+- ✅ **Energy Consumption (Display)** - Now uses correct usage value
+- ✅ **Days Until Empty** - Now calculates correctly for any usage rate
+- ✅ **Days Remaining Difference** - Always shows comparison values
 
-### 📦 HACS Compliance Improvements
-- ✅ Added recommended `hacs.json` fields
-- ✅ Added service translations to `strings.json`
+### 📊 Before vs After
 
----
+**Scenario**: 500 gal tank, pre-delivery 391.9 gal, delivery 28.1 gal, current 270 gal
 
-### Previous in v3.0.5
-
-#### 🎯 Automatic Pre-Delivery Detection
-**The integration now automatically captures your exact tank level when a delivery happens!**
-
-- **Zero configuration needed** - works automatically after installation
-- **100% accurate tracking** regardless of delivery size (small top-offs or full deliveries)
-- **No more manual entry** - the system detects new deliveries and calculates pre-delivery levels automatically
-
-#### 📊 Fixed: Estimated Refill Cost
-Now uses realistic **80% maximum fill level** (industry standard) instead of assuming 100% fill.
+| Sensor | Before (Broken) | After (Fixed) |
+|--------|-----------------|---------------|
+| Used Since Delivery | 150 gal ✓ | 150 gal ✓ |
+| Daily Average Usage | 0.0000 gal/day ✗ | 4.69 gal/day ✓ |
+| Cost Since Delivery | $0.00 ✗ | $526.50 ✓ |
+| Energy Consumption | 0 ft³ ✗ | 5,458 ft³ ✓ |
+| Days Until Empty | 9999 days ✗ | 58 days ✓ |
 
 ---
 
@@ -54,17 +45,19 @@ Now uses realistic **80% maximum fill level** (industry standard) instead of ass
 - **Delivery History** - Track all deliveries with dates and amounts
 - **Cost Tracking** - Monitor cost per gallon and total spend
 
-### Accurate Consumption Tracking (v3.0.5)
+### Accurate Consumption Tracking (v3.0.5+)
 - **Automatic Pre-Delivery Capture** - 100% accurate for any delivery size
 - **Lifetime Consumption** - Total propane used since installation
 - **Daily Average** - Your average usage per day
 - **Used Since Delivery** - Gallons consumed since last fill
 - **Energy Dashboard Integration** - Track propane consumption alongside other utilities
 
-### Smart Calculations
+### Smart Calculations (v3.0.7)
+- **Centralized Calculations** - All sensors use same pre-delivery level
+- **Instant Updates** - Change pre-delivery level, all sensors update immediately
 - **Estimated Refill Cost** - Realistic cost estimates using 80% fill level
-- **Days Until Empty** - Projected days remaining based on usage patterns
-- **Cost Analysis** - Price per gallon and per cubic foot
+- **Days Until Empty** - Works with ANY usage rate (even vacation homes!)
+- **Calculation Transparency** - See exactly how each value is computed
 
 ### Diagnostic Tools
 - **Pre-Delivery Level Tracker** - See captured pre-delivery levels
@@ -122,13 +115,13 @@ Now uses realistic **80% maximum fill level** (industry standard) instead of ass
 - Propane Tank Gallons Remaining
 - Used Since Last Delivery (with 100% accuracy!)
 - Daily Average Usage
-- Days Until Empty
+- Days Until Empty (works with ANY usage rate!)
 - Cost Per Gallon
 - Estimated Refill Cost (realistic 80% fill)
 - Lifetime Consumption
 - And more...
 
-#### Diagnostic Entity (v3.0.5)
+#### Diagnostic Entity (v3.0.5+)
 - **Pre-Delivery Tank Level** - Automatically captured when deliveries occur
   - Visible in Diagnostics section
   - Can be manually adjusted if needed
@@ -151,7 +144,7 @@ This tracks your propane consumption over time with 100% accuracy!
 
 ## 🎯 How Automatic Detection Works
 
-### The Magic Behind v3.0.5
+### The Magic Behind v3.0.5+
 
 When AmeriGas delivers propane:
 1. Their API updates with new delivery date and amount
@@ -159,8 +152,9 @@ When AmeriGas delivers propane:
 3. Integration detects the delivery date changed
 4. Automatically calculates: **Pre-delivery = Current - Delivery**
 5. Stores this exact value permanently
+6. **v3.0.7**: All dependent sensors immediately recalculate
 
-**Real Example (Your Case):**
+**Real Example:**
 ```
 Delivery detected: June 23, 2024
 Current level: 420 gallons (post-delivery)
@@ -173,11 +167,9 @@ Current: 300 gallons
 Used: 420 - 300 = 120 gallons ✅ PERFECT!
 ```
 
-No more 0% accuracy for small deliveries. No more manual entry. Just works!
-
 ---
 
-## 🛠️ Manual Services (v3.0.5)
+## 🛠️ Manual Services
 
 ### Service: Set Pre-Delivery Level
 
@@ -187,13 +179,12 @@ For edge cases and historical deliveries:
 - **Automatic detection failed** - Rare cases where delivery detection didn't trigger
 - **You want to correct a value** - Fix any inaccurate capture
 
-### Using the Service
-
 **Via Developer Tools:**
 1. Go to **Developer Tools** → **Services**
 2. Search for `AmeriGas: Set Pre-Delivery Level`
 3. Enter the pre-delivery level in gallons
 4. Click **Call Service**
+5. **v3.0.7**: All dependent sensors update immediately!
 
 **Example Service Call:**
 ```yaml
@@ -201,42 +192,6 @@ service: amerigas.set_pre_delivery_level
 data:
   gallons: 391.9
 ```
-
-**Via Automation:**
-```yaml
-# Example: Set pre-delivery level when you press a button
-automation:
-  - alias: "Set Propane Pre-Delivery Level"
-    trigger:
-      - platform: state
-        entity_id: input_button.set_propane_level
-    action:
-      - service: amerigas.set_pre_delivery_level
-        data:
-          gallons: "{{ states('input_number.propane_pre_delivery') | float }}"
-```
-
-**What the Service Does:**
-- Updates `number.amerigas_pre_delivery_level` with your specified value
-- All consumption calculations immediately use this new value
-- Value persists across Home Assistant restarts
-- Logs the change for troubleshooting
-
-**Calculating Pre-Delivery Level:**
-
-If you need to figure out what your pre-delivery level was:
-
-```
-Pre-Delivery = Current Level - Delivery Amount + Used Since Delivery
-
-Example:
-Current: 300 gallons
-Delivery: 28.1 gallons  
-Used since delivery: 120 gallons
-Pre-Delivery = 300 - 28.1 + 120 = 391.9 gallons
-```
-
-Or simply check your tank gauge reading before the delivery truck arrives!
 
 ---
 
@@ -244,144 +199,82 @@ Or simply check your tank gauge reading before the delivery truck arrives!
 
 **Force an immediate update from the AmeriGas API**
 
-The integration automatically updates every **6 hours**, but you can manually refresh anytime.
+The integration automatically updates at **00:00, 06:00, 12:00, 18:00** daily, but you can manually refresh anytime.
 
 **When to use:**
 - You want current data right now
 - Checking if a delivery has been recorded
 - Troubleshooting update issues
-- Just installed and want fresh data
 
 **Via Developer Tools:**
 1. Go to **Developer Tools** → **Services**
 2. Search for `AmeriGas: Refresh Data`
-3. Click **Call Service** (no parameters needed)
+3. Click **Call Service**
 
 **Example Service Call:**
 ```yaml
 service: amerigas.refresh_data
 ```
 
-**Via Automation:**
-```yaml
-# Example: Refresh data every morning at 6 AM
-automation:
-  - alias: "Daily Propane Update"
-    trigger:
-      - platform: time
-        at: "06:00:00"
-    action:
-      - service: amerigas.refresh_data
-```
-
-**What the Service Does:**
-- Fetches latest data from AmeriGas API immediately
-- Updates all 37 sensors with fresh data
-- Triggers delivery detection if new delivery found
-- Logs update status for troubleshooting
-
-**Automatic Update Schedule:**
-- **Schedule:** 00:00, 06:00, 12:00, 18:00 daily (cron-based)
-- **On Startup:** Immediate refresh when HA starts
-- **Manual:** Use this service to force update anytime
-
-**Note:** If you notice sensors not updating automatically, check Home Assistant logs for errors and use this service to manually refresh.
-
 ---
 
 ## 🔧 Troubleshooting
 
-### Sensors Haven't Updated in 6+ Hours
+### Sensors Not Updating After Setting Pre-Delivery Level
 
-**Issue:** Sensors show stale data (last updated 6-14+ hours ago)
+**Fixed in v3.0.7!** All sensors now have a state change listener that triggers recalculation when the pre-delivery level changes.
 
-**v3.0.5 Fix:** This was caused by connection leaks and is now fixed! If you're on v3.0.5:
+If you're still seeing issues:
+1. Check you're running v3.0.7 or later
+2. Restart Home Assistant after updating
+3. Check logs for any errors
 
-**Quick Fix:**
-1. Use manual refresh: `service: amerigas.refresh_data`
-2. Check logs for "Unclosed connection" errors
-3. If you see connection errors, restart Home Assistant
-4. After restart with v3.0.5, automatic updates should work
+### Days Until Empty Shows Large Number
 
-**If still having issues:**
-- Enable debug logging (see COORDINATOR_UPDATE_GUIDE.md)
-- Check for API errors in logs
-- Verify AmeriGas website is accessible
-- Try manual refresh to confirm credentials work
+**This is correct behavior!** 
 
-**Note:** Versions before v3.0.5 had connection leaks causing updates to stop. v3.0.5 fixes this completely.
+v3.0.7 now does the math regardless of how low your usage is:
+
+**Example**: Vacation home using 0.05 gal/day
+```
+400 gallons ÷ 0.05 gal/day = 8,000 days (~22 years)
+Sensor shows: "8000 days" ✓
+```
+
+The sensor will only show "unavailable" if you've never had a delivery recorded (no baseline data).
+
+### Days Until Empty Shows 9999
+
+This means your usage is extremely low (< 0.001 gal/day). The sensor caps at 9999 days to prevent overflow, but you can see the real calculation in the sensor attributes.
+
+**Check attributes:**
+```yaml
+sensor.propane_days_until_empty:
+  calculation: "400.00 gal ÷ 0.00 gal/day = 800000.0 days (capped at 9999)"
+  note: "Usage rate extremely low - showing 9999 days as practical maximum"
+```
+
+### Daily Average Shows 0.0000 gal/day
+
+**Fixed in v3.0.7!** This was caused by the sensor using a fallback 20% estimation instead of the actual pre-delivery level.
+
+If still showing 0:
+1. Verify pre-delivery level is set (check the number entity)
+2. Verify you're on v3.0.7 or later
+3. Check the `calculation_method` attribute - should show `auto_captured`
 
 ### Finding Your Pre-Delivery Level Entity
 
 **The entity ID is dynamic based on your device name!**
 
 Common entity IDs:
-- `number.amerigas_propane_pre_delivery_tank_level` (default device name)
-- `number.propane_tank_pre_delivery_tank_level` (if you renamed device to "Propane Tank")
-- `number.my_tank_pre_delivery_tank_level` (if you renamed device to "My Tank")
+- `number.amerigas_propane_pre_delivery_tank_level` (default)
+- `number.propane_tank_pre_delivery_tank_level` (if renamed)
 
 **To find yours:**
 1. Go to **Developer Tools** → **States**
 2. Search for: `pre_delivery`
-3. Look for the number entity with "Pre-Delivery Tank Level" in the name
-
-**Note:** The integration uses entity registry lookups by unique_id, so the service and automatic detection work regardless of what you name the device in the UI!
-
-### Service Works But Still Shows Fallback Calculation
-
-**Issue:** After running `amerigas.set_pre_delivery_level`, the sensor still shows fallback estimation.
-
-**Check:**
-1. Verify the number entity value is > 0 (not 0)
-2. Restart Home Assistant after setting the value
-3. Check Home Assistant logs for any errors
-
-**If still not working:**
-- Check logs for "Could not lookup pre-delivery level entity"
-- Verify the number entity exists in Developer Tools → States
-- Try manually setting the state in Developer Tools
-
-### Pre-Delivery Level Shows 0
-
-**First delivery after upgrade:**
-- Normal! The auto-capture only works for NEW deliveries after v3.0.5 installation
-- Wait for your next delivery and it will capture automatically
-- Or use the service to manually set the value
-
-**Using the service:**
-```yaml
-service: amerigas.set_pre_delivery_level
-data:
-  gallons: 391.9
-```
-
-**Or manually via Developer Tools:**
-1. Go to **Developer Tools** → **States**
-2. Search for `pre_delivery` to find your entity
-3. Set to your actual pre-delivery level
-4. Click **Set State**
-
-### Sensors Show "Unavailable"
-
-**Common causes:**
-- Integration still loading after restart (wait 30 seconds)
-- AmeriGas API credentials incorrect
-- Internet connection issues
-- AmeriGas website down
-
-**Fix:**
-1. Check Home Assistant logs
-2. Verify credentials in integration config
-3. Try reloading the integration
-
-### Estimated Refill Cost Seems Wrong
-
-As of v3.0.5, this uses **80% maximum fill** (industry standard).
-
-If your company fills to a different percentage:
-- 80% is typical for safety (thermal expansion)
-- Some companies may fill to 85% or 75%
-- The estimate is based on last delivery cost
+3. Look for the number entity with "Pre-Delivery Tank Level"
 
 ---
 
@@ -402,31 +295,38 @@ entities:
     name: Daily Average
   - entity: sensor.amerigas_days_until_empty
     name: Days Until Empty
+    secondary_info: attribute:calculation
   - type: divider
   - entity: sensor.amerigas_estimated_refill_cost
     name: Est. Refill Cost
+  - entity: sensor.amerigas_cost_since_last_delivery
+    name: Cost Since Delivery
   - entity: sensor.amerigas_last_delivery_date
     name: Last Delivery
   - entity: sensor.amerigas_last_delivery_gallons
     name: Delivery Amount
-  - type: divider
-  - entity: number.amerigas_pre_delivery_level
-    name: Pre-Delivery Level (Auto)
 ```
 
 ---
 
-## 🔄 Upgrading to v3.0.5
+## 🔄 Upgrading
 
-### From v3.0.0 - v3.0.4
+### From v3.0.6
 
 1. Update integration through HACS
 2. Restart Home Assistant
-3. New number entity appears automatically: `number.amerigas_pre_delivery_level`
-4. Wait for next delivery - auto-capture starts working!
-5. All existing sensors continue working
+3. All sensors will immediately use correct pre-delivery level
+4. No configuration changes needed
 
-**No breaking changes!** Everything that worked before still works, just better.
+**No breaking changes!**
+
+### From v3.0.0 - v3.0.5
+
+1. Update integration through HACS
+2. Restart Home Assistant
+3. All existing sensors continue working
+4. New sensors appear automatically
+5. If pre-delivery level was set, all sensors now use it correctly
 
 ### From v2.x (pyscript version)
 
@@ -436,7 +336,7 @@ This is a complete rewrite. See [MIGRATION.md](MIGRATION.md) for detailed instru
 
 ## 🐛 Known Issues
 
-### Small Delivery History
+### Historical Small Deliveries
 
 If you had small deliveries before v3.0.5:
 - Historical calculations remain inaccurate (can't change the past)
@@ -445,7 +345,7 @@ If you had small deliveries before v3.0.5:
 
 ### API Rate Limits
 
-- Integration updates every 6 hours by default
+- Integration updates every 6 hours by default (00:00, 06:00, 12:00, 18:00)
 - AmeriGas may rate limit if updated too frequently
 - Don't manually trigger updates more than once per hour
 
