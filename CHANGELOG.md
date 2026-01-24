@@ -5,17 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.0.7] - 2026-01-21
+## [3.0.7] - 2026-01-24
 
 ### 🐛 Critical Bug Fixes
+
+#### Race Condition in Sensor Updates - CRITICAL FIX
+
+**Fixed: Sensors not updating when pre-delivery level changes**
+- **Root cause**: Only `PropaneUsedSinceDeliverySensor` had a state change listener for the pre-delivery level entity. Other dependent sensors (Cost Since Delivery, Energy Consumption, Daily Average Usage, Days Until Empty) only recalculated on coordinator updates (every 6 hours), causing them to use stale estimated values.
+- **Solution**: Moved pre-delivery level state change listener to `AmeriGasSensorBase` so ALL dependent sensors automatically recalculate when pre-delivery level changes.
+- **Impact**: Setting pre-delivery level now immediately updates all dependent sensors
+- **Affected sensors**:
+  - Cost Since Last Delivery
+  - Energy Consumption (Display)
+  - Daily Average Usage
+  - Days Until Empty
+  - Days Remaining Difference
+
+**Fixed: Daily Average Usage showing 0.0000 gal/day**
+- **Root cause**: `PropaneDailyAverageUsageSensor` was duplicating calculation logic inline without looking up the pre-delivery level, always using the 20% fallback estimation.
+- **Solution**: Refactored to use centralized `_calculate_daily_average()` helper which properly uses pre-delivery level.
+- **Impact**: Daily average now reflects actual usage based on captured pre-delivery level
+
+**Fixed: Cascading calculation errors**
+- **Root cause**: Multiple sensors were independently calculating "used since delivery" with different methods, most ignoring the pre-delivery level entirely.
+- **Solution**: 
+  - Added `_get_pre_delivery_level()` centralized helper to base class
+  - Refactored `_calculate_used_since_delivery()` to use pre-delivery level and return tuple `(gallons, method)`
+  - All dependent sensors now use these centralized helpers
+- **Impact**: Consistent, accurate calculations across all sensors
 
 #### Sensor State Issues
 
 **Fixed: Energy Consumption (Display) showing "unknown"**
 - **Root cause**: Sensor relied on entity state lookup which failed during initialization
-- **Solution**: Calculate directly from coordinator data (same logic as UsedSinceDelivery)
+- **Solution**: Calculate directly from coordinator data using centralized helper
 - **Impact**: Sensor now always shows valid cubic feet value
-- **Affected**: All users upgrading from v3.0.0-3.0.6
 
 **Fixed: Days Until Empty showing "unavailable" for low usage**
 - **Root cause**: Sensor marked itself unavailable when daily usage was < 0.1 gal/day
@@ -25,104 +50,86 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Extremely low (< 0.001 gal/day): Caps at 9999 days to prevent overflow
 - **Philosophy**: Do the math, don't patronize the user
 - **Impact**: Vacation homes and low-usage scenarios now show accurate projections
-- **Only unavailable**: When no delivery has ever been recorded (no baseline data)
-- **Affected**: Users with low propane usage patterns
 
 **Fixed: Days Remaining Difference showing "unknown"**
 - **Root cause**: Sensor returned None when usage was low
 - **Solution**: Always calculate difference, cap at 9999 for extremely low usage
-- **Impact**: Sensor now always shows comparison when data available
-- **Affected**: Users with low usage patterns
 
 ### ✨ Enhancements
 
+#### Centralized Pre-Delivery Level Support
+- **Added**: `_get_pre_delivery_level()` helper method in base class
+- **Added**: Pre-delivery level state change listener in base class
+- **Added**: Cached entity ID lookup for efficiency
+- **Benefit**: All sensors automatically respond to pre-delivery level changes
+
+#### Improved Calculation Transparency
+- **Added**: `calculation_method` attribute to all usage-dependent sensors
+- **Added**: `calculation` attribute showing exact math performed
+- **Added**: `note` attribute for edge cases (low usage, capped values)
+
 #### Days Until Empty Improvements
-- **Added**: `calculation` attribute showing exact math (e.g., "400.00 gal ÷ 0.05 gal/day = 8000.0 days")
-- **Added**: `note` attribute for edge cases:
-  - "Low usage rate: 0.050 gal/day" for < 0.1 gal/day
-  - "Usage rate extremely low - showing 9999 days as practical maximum" for < 0.001 gal/day
-- **Added**: Transparency in how values are calculated
+- **Added**: Calculation attribute showing exact math
+- **Added**: Note attribute for edge cases
+- **Added**: Support for ANY usage rate (no minimum threshold)
 
-#### Days Remaining Difference Improvements
-- **Added**: `calculation` attribute showing math
-- **Added**: `gallons_remaining` and `daily_average_usage` attributes
-- **Added**: `note` for extremely low usage scenarios
+### 📊 Example: Before vs After Fix
 
-#### Lifetime Energy Sensor
-- **Enhanced**: Returns 0.0 instead of None for better Energy Dashboard compatibility
-- **Added**: `lifetime_gallons` attribute showing source value
-- **Added**: `formula` attribute showing conversion calculation
-- **Impact**: More stable Energy Dashboard integration
+**Scenario**: 500 gal tank, pre-delivery level set to 391.9 gal, delivery 28.1 gal, current 270 gal
 
-### 📊 Math Verification
+**Before v3.0.7 (broken)**:
+```yaml
+# Used Since Delivery had listener, calculated correctly
+sensor.propane_used_since_last_delivery: 150 gal ✓
 
-**Verified: Lifetime tracking math is 100% correct**
-- Lifetime Gallons uses ratchet mechanism (only increments on consumption)
-- Lifetime Energy uses standard conversion (1 gal = 36.3888 ft³)
-- No accumulation errors or phantom increases
-- Filters noise (< 0.5 gal changes ignored)
+# Other sensors used 20% fallback (100 gal estimated pre-delivery)
+# Starting: 100 + 28.1 = 128.1 gal, Used: 128.1 - 270 = negative → 0 gal
+sensor.propane_daily_average_usage: 0.0000 gal/day ✗
+sensor.propane_cost_since_last_delivery: $0.00 ✗
+sensor.propane_energy_consumption: 0 ft³ ✗
+sensor.propane_days_until_empty: 9999 days ✗
+```
+
+**After v3.0.7 (fixed)**:
+```yaml
+# All sensors now use pre-delivery level correctly
+sensor.propane_used_since_last_delivery: 150 gal ✓
+sensor.propane_daily_average_usage: 4.69 gal/day ✓
+sensor.propane_cost_since_last_delivery: $526.50 ✓
+sensor.propane_energy_consumption: 5458.32 ft³ ✓
+sensor.propane_days_until_empty: 58 days ✓
+```
 
 ### 🔧 Technical Changes
 
 **Modified Files**:
-- `sensor.py` - Fixed 4 sensor classes
-  - PropaneEnergyConsumptionSensor (calculate directly from coordinator)
-  - PropaneDaysUntilEmptySensor (always do math, cap at 9999)
-  - PropaneDaysRemainingDifferenceSensor (always do math, cap at 9999)
-  - PropaneLifetimeEnergySensor (return 0.0 instead of None)
+- `sensor.py` - Major refactor
+  - Added `_get_pre_delivery_level()` to `AmeriGasSensorBase`
+  - Added `async_added_to_hass()` with state change listener to `AmeriGasSensorBase`
+  - Refactored `_calculate_used_since_delivery()` to use pre-delivery level
+  - Refactored `_calculate_daily_average()` to use centralized helper
+  - Fixed `PropaneEnergyConsumptionSensor` to use centralized helper
+  - Fixed `PropaneDailyAverageUsageSensor` to use centralized helper
+  - Fixed `PropaneCostSinceDeliverySensor` to use centralized helper
+  - Removed duplicate listener from `PropaneUsedSinceDeliverySensor`
 
 **Code Quality**:
-- Added comprehensive docstrings explaining v3.0.7 changes
-- Added calculation transparency in sensor attributes
-- Improved edge case handling
-
-### 📈 Usage Examples
-
-**Example 1: Vacation Home (0.05 gal/day)**
-```yaml
-sensor.propane_days_until_empty:
-  state: 8000
-  attributes:
-    gallons_remaining: 400
-    daily_average_usage: 0.05
-    calculation: "400.00 gal ÷ 0.05 gal/day = 8000.0 days"
-    note: "Low usage rate: 0.050 gal/day"
-```
-
-**Example 2: Extremely Low Usage (0.0005 gal/day)**
-```yaml
-sensor.propane_days_until_empty:
-  state: 9999
-  attributes:
-    gallons_remaining: 400
-    daily_average_usage: 0.0005
-    calculation: "400.00 gal ÷ 0.00 gal/day = 800000.0 days (capped at 9999)"
-    note: "Usage rate extremely low - showing 9999 days as practical maximum"
-```
-
-**Example 3: Normal Usage (2 gal/day)**
-```yaml
-sensor.propane_days_until_empty:
-  state: 200
-  attributes:
-    gallons_remaining: 400
-    daily_average_usage: 2.0
-    calculation: "400.00 gal ÷ 2.00 gal/day = 200.0 days"
-```
+- Eliminated code duplication across sensors
+- Single source of truth for usage calculations
+- Consistent calculation method reporting
+- Improved logging for debugging
 
 ### 🔄 Migration Notes
 
 #### From v3.0.6
 - **No breaking changes!**
 - Simply update and restart
-- Sensors will populate immediately with correct values
-- Low usage scenarios now show accurate projections instead of "unavailable"
-- Energy Consumption will show value instead of "unknown"
+- All sensors will immediately use correct pre-delivery level
+- If pre-delivery level was already set, dependent sensors will show correct values after restart
 
 #### From v3.0.0 - v3.0.5
 - See v3.0.6 migration notes below
-- All v3.0.6 fixes included
-- All v3.0.7 fixes included
+- All previous fixes included
 
 ---
 
