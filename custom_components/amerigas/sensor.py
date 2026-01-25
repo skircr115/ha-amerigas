@@ -79,7 +79,7 @@ async def async_setup_entry(
         PropaneDaysRemainingDifferenceSensor(coordinator, entry.entry_id),
     ])
     
-    # Lifetime tracking sensors (v2.0.0+)
+    # Lifetime tracking sensors (v2.0.0+ with v2.1.0 enhancements)
     lifetime_gallons_sensor = PropaneLifetimeGallonsSensor(coordinator, hass, entry.entry_id)
     lifetime_energy_sensor = PropaneLifetimeEnergySensor(coordinator, hass, lifetime_gallons_sensor, entry.entry_id)
     
@@ -1040,11 +1040,16 @@ class PropaneDaysRemainingDifferenceSensor(AmeriGasSensorBase):
 
 
 # =============================================================================
-# LIFETIME TRACKING SENSORS (v2.0.0+ with v2.1.0 enhancements)
+# LIFETIME TRACKING SENSORS (v3.0.8 - ENERGY DASHBOARD FIX)
 # =============================================================================
 
 class PropaneLifetimeGallonsSensor(AmeriGasSensorBase, RestoreEntity):
-    """Lifetime gallons sensor with robust state restoration."""
+    """Lifetime gallons sensor with robust state restoration.
+    
+    v3.0.8 FIX: Added _restoration_complete flag to prevent race condition
+    where coordinator updates could happen before state restoration finishes,
+    causing the sensor to reset to 0 and corrupt Energy Dashboard data.
+    """
     
     _attr_name = "Lifetime Gallons"
     _attr_unique_id = "propane_lifetime_gallons"
@@ -1061,9 +1066,15 @@ class PropaneLifetimeGallonsSensor(AmeriGasSensorBase, RestoreEntity):
         self._total_triggers: int = 0
         self._ignored_triggers: int = 0
         self._largest_consumption: float = 0.0
+        self._restoration_complete: bool = False  # v3.0.8: Prevent updates before restoration
     
     async def async_added_to_hass(self) -> None:
-        """Restore state when added to hass."""
+        """Restore state when added to hass.
+        
+        v3.0.8: State restoration MUST complete before any coordinator updates
+        are processed, otherwise we risk overwriting the database with 0.0 and
+        corrupting Energy Dashboard historical data.
+        """
         await super().async_added_to_hass()
         
         if (last_state := await self.async_get_last_state()) is not None:
@@ -1101,6 +1112,10 @@ class PropaneLifetimeGallonsSensor(AmeriGasSensorBase, RestoreEntity):
                 except Exception as e:
                     _LOGGER.error(f"Error restoring lifetime sensor attributes: {e}")
         
+        # v3.0.8 FIX: Mark restoration complete BEFORE adding listener
+        self._restoration_complete = True
+        _LOGGER.debug(f"State restoration complete. Lifetime total: {self._lifetime_total} gal")
+        
         self.async_on_remove(
             self.coordinator.async_add_listener(self._handle_coordinator_update)
         )
@@ -1110,9 +1125,21 @@ class PropaneLifetimeGallonsSensor(AmeriGasSensorBase, RestoreEntity):
     
     @callback
     def _handle_coordinator_update(self) -> None:
-        """Handle updated data from the coordinator."""
+        """Handle updated data from the coordinator.
+        
+        v3.0.8 FIX: Block all updates until restoration completes.
+        This prevents writing 0.0 to database during startup which would
+        corrupt Energy Dashboard historical data permanently.
+        """
+        # v3.0.8 FIX: Block updates until restoration completes
+        if not self._restoration_complete:
+            _LOGGER.debug("Skipping update - state restoration not complete")
+            return
+        
         current_gallons = self._calculate_gallons_remaining()
         if current_gallons is None:
+            # v3.0.8: Preserve existing value when API unreachable
+            _LOGGER.debug("API unreachable - preserving existing lifetime total")
             self.async_write_ha_state()
             return
         
@@ -1163,7 +1190,8 @@ class PropaneLifetimeGallonsSensor(AmeriGasSensorBase, RestoreEntity):
             "ignored_triggers": self._ignored_triggers,
             "largest_consumption": round(self._largest_consumption, 2),
             "threshold_gallons": NOISE_THRESHOLD_GALLONS,
-            "version": "3.0.7",
+            "restoration_complete": self._restoration_complete,  # v3.0.8: Debug aid
+            "version": "3.0.8",
         }
 
 
@@ -1208,5 +1236,5 @@ class PropaneLifetimeEnergySensor(AmeriGasSensorBase):
             "conversion_factor": GALLONS_TO_CUBIC_FEET,
             "lifetime_gallons": gallons if gallons is not None else 0.0,
             "formula": f"{gallons if gallons else 0.0} gal × {GALLONS_TO_CUBIC_FEET} ft³/gal",
-            "version": "3.0.7",
+            "version": "3.0.8",
         }
