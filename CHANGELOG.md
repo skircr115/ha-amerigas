@@ -33,6 +33,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Prevents false consumption events during network outages
 - Maintains data integrity for Energy Dashboard
 
+**And Fixed: API timeout issues with slow AmeriGas website**
+
+Root cause: AmeriGas website can be slow to respond, causing 30-second timeout to be insufficient
+Solution: Increased API timeout from 30 seconds to 45 seconds
+Impact: Resolves "unavailable" sensor states caused by API timeouts
+Affected components: All API calls (login and dashboard fetch)
+
 ### 🔧 Technical Changes
 
 **Modified Files**:
@@ -46,6 +53,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `sensor.py` - PropaneLifetimeEnergySensor class  
   - Updated version to 3.0.8
+
+- `const.py` - Changed API_TIMEOUT from 30 to 45 seconds due to AmeriGas web server consistent latency. This timeout is used for both:
+
+Login authentication (POST to /Login/Login)
+Dashboard data fetch (GET to /Dashboard/Dashboard)
 
 - `manifest.json` - Version bump to 3.0.8
 
@@ -100,14 +112,15 @@ If sensors reset to 0 despite the update:
 
 **Restart Test**: ✅ Values persist across multiple HA restarts  
 **API Failure Test**: ✅ Values remain stable when AmeriGas unreachable  
+**API Timeout Test**: ✅ AmeriGas connectivity during updates is now more stable resulting in less frequent "unreachable" statuses  
 **Integration Reload**: ✅ Values preserved through reload cycles  
 **Energy Dashboard**: ✅ Historical data maintains integrity  
 **Long-term Stability**: ✅ No resets over extended operation
 
-### 🔒 Energy Dashboard Data Integrity Guarantee
+### 🔒 Energy Dashboard Data Integrity
 
 With v3.0.8:
-- Lifetime sensors will NEVER reset to 0 unexpectedly
+- Lifetime sensors should NEVER reset to 0 unexpectedly
 - Data persists across HA restarts
 - Data persists through API outages  
 - Data persists through integration reloads
