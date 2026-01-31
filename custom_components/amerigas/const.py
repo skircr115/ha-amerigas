@@ -10,7 +10,7 @@ DEFAULT_SCAN_INTERVAL: Final = 6  # hours
 # API Constants
 API_LOGIN_URL: Final = "https://www.myamerigas.com/Login/Login"
 API_DASHBOARD_URL: Final = "https://www.myamerigas.com/Dashboard/Dashboard"
-API_TIMEOUT: Final = 30
+API_TIMEOUT: Final = 45 #seconds; increase if you have a slow connection (or AmeriGas is slow)
 
 # Sensor Keys
 TANK_LEVEL: Final = "tank_level"

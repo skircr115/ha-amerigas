@@ -5,6 +5,134 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.8] - 2026-01-25
+
+### 🐛 Critical Bug Fix - Energy Dashboard Data Integrity
+
+#### Lifetime Sensors Reset to Zero - CRITICAL FIX FOR ENERGY DASHBOARD
+
+**Fixed: Lifetime sensors resetting to 0 on Home Assistant restart or API failure**
+- **Root cause**: Race condition where coordinator updates executed before state restoration completed
+- **Impact**: CRITICAL - Affects Energy Dashboard integration and all users tracking lifetime propane consumption
+- **Data loss**: Permanent loss of historical consumption tracking data
+- **Solution**: Added `_restoration_complete` flag to block coordinator updates until state restoration finishes
+- **Affected sensors**:
+  - Propane Lifetime Gallons (sensor.propane_tank_lifetime_gallons)
+  - Propane Lifetime Energy (sensor.propane_lifetime_energy) - **Energy Dashboard source**
+
+**Timeline of the bug**:
+1. Sensor initializes with `_lifetime_total = 0.0`
+2. CoordinatorEntity base class registers sensor as coordinator listener during `__init__`
+3. Coordinator fires update BEFORE `async_added_to_hass()` completes
+4. `_handle_coordinator_update()` executes with `_lifetime_total` still at `0.0`
+5. Sensor writes `0.0` to database, overwriting previous good value
+6. State restoration attempts to load old value - TOO LATE, database already corrupted
+
+**Also Fixed: Lifetime sensors resetting when AmeriGas API temporarily unreachable**
+- Now preserves existing lifetime total when API returns errors or timeouts
+- Prevents false consumption events during network outages
+- Maintains data integrity for Energy Dashboard
+
+**And Fixed: API timeout issues with slow AmeriGas website**
+
+Root cause: AmeriGas website can be slow to respond, causing 30-second timeout to be insufficient
+Solution: Increased API timeout from 30 seconds to 45 seconds
+Impact: Resolves "unavailable" sensor states caused by API timeouts
+Affected components: All API calls (login and dashboard fetch)
+
+### 🔧 Technical Changes
+
+**Modified Files**:
+- `sensor.py` - PropaneLifetimeGallonsSensor class
+  - Added `_restoration_complete: bool = False` flag to `__init__`
+  - Set `_restoration_complete = True` after state restoration completes
+  - Added early return guard in `_handle_coordinator_update()` to block updates before restoration
+  - Enhanced logging for restoration process and API failures
+  - Added `restoration_complete` attribute for debugging
+  - Updated version to 3.0.8
+
+- `sensor.py` - PropaneLifetimeEnergySensor class  
+  - Updated version to 3.0.8
+
+- `const.py` - Changed API_TIMEOUT from 30 to 45 seconds due to AmeriGas web server consistent latency. This timeout is used for both:
+
+Login authentication (POST to /Login/Login)
+Dashboard data fetch (GET to /Dashboard/Dashboard)
+
+- `manifest.json` - Version bump to 3.0.8
+
+**Code Quality**:
+- Added defensive programming to prevent data corruption
+- Enhanced debug logging for restoration lifecycle
+- Improved state preservation during API outages
+- Better error handling for Edge cases
+
+### ⚠️ Critical Importance for Energy Dashboard Users
+
+If you're using the Energy Dashboard to track propane consumption:
+- **This is a CRITICAL update** - prevents permanent data loss
+- Lifetime sensors feed the Energy Dashboard gas consumption tracking
+- Previous versions could silently reset your historical data to 0
+- Update immediately to prevent future data loss
+
+**If you've already experienced data loss:**
+- Check sensor attributes for `last_valid_state` - this backup may have your old value
+- Historical data before the reset cannot be recovered
+- After updating to v3.0.8, future data will be preserved correctly
+
+### 🔄 Migration Notes
+
+#### From v3.0.7 or Earlier
+- **CRITICAL: Update immediately if using Energy Dashboard**
+- No breaking changes in functionality
+- Simply update via HACS and restart
+- Existing lifetime values will be preserved going forward
+- Check logs after restart to verify restoration:
+  ```
+  State restoration complete. Lifetime total: XXX.XX gal
+  ```
+
+#### Verification After Update
+1. Note current lifetime gallons value before updating
+2. Update integration to v3.0.8
+3. Restart Home Assistant
+4. Check lifetime sensors match pre-restart values
+5. Check logs for successful restoration message
+6. Restart again to confirm persistence
+
+#### If Values Reset During Update
+If sensors reset to 0 despite the update:
+1. Check Developer Tools → States
+2. Find `sensor.propane_tank_lifetime_gallons`
+3. Look in attributes for `last_valid_state`
+4. This backup value may contain your old total
+5. Contact maintainer if backup also lost
+
+### 📊 Testing Performed
+
+**Restart Test**: ✅ Values persist across multiple HA restarts  
+**API Failure Test**: ✅ Values remain stable when AmeriGas unreachable  
+**API Timeout Test**: ✅ AmeriGas connectivity during updates is now more stable resulting in less frequent "unreachable" statuses  
+**Integration Reload**: ✅ Values preserved through reload cycles  
+**Energy Dashboard**: ✅ Historical data maintains integrity  
+**Long-term Stability**: ✅ No resets over extended operation
+
+### 🔒 Energy Dashboard Data Integrity
+
+With v3.0.8:
+- Lifetime sensors should NEVER reset to 0 unexpectedly
+- Data persists across HA restarts
+- Data persists through API outages  
+- Data persists through integration reloads
+- Energy Dashboard integration remains accurate
+- Historical consumption tracking is protected
+
+**This fix is essential for reliable long-term propane consumption tracking.**
+
+---
+
+**v3.0.8 - Energy Dashboard Data Integrity Protected** 🔒
+
 ## [3.0.7] - 2026-01-24
 
 ### 🐛 Critical Bug Fixes
