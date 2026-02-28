@@ -141,7 +141,12 @@ class AmeriGasAPI:
                 return default
         
         def parse_date(date_str):
-            """Parse AmeriGas date in multiple formats, always returns timezone-aware datetime."""
+            """Parse AmeriGas date in multiple formats, always returns timezone-aware datetime.
+            
+            Naive datetimes (date-only strings like MM/DD/YYYY) are treated as local time
+            using the HA-configured timezone, so dates never roll back a day due to UTC offset.
+            Datetimes that already carry timezone info are left unchanged.
+            """
             if not date_str or date_str in ['', 'N/A', 'Unknown', 'None']:
                 return None
             
@@ -168,11 +173,11 @@ class AmeriGasAPI:
                 else:
                     dt_obj = datetime.fromisoformat(str(date_str))
                 
-                # If we got a datetime, ensure it's timezone-aware
                 if dt_obj:
                     if dt_obj.tzinfo is None:
-                        # Assume UTC if no timezone
-                        dt_obj = dt_obj.replace(tzinfo=timezone.utc)
+                        # Treat as local time — date-only strings have no timezone context,
+                        # so attaching UTC would cause them to roll back a day for US timezones.
+                        dt_obj = dt_obj.replace(tzinfo=dt_util.get_default_time_zone())
                     return dt_obj
                 
                 return None
@@ -192,42 +197,29 @@ class AmeriGasAPI:
         last_tank_reading = parse_date(account_data.get('TMReadDate', ''))
         last_delivery_date = parse_date(last_delivery_date_raw)
         
-        # Next delivery date - check multiple locations
+        # Next delivery date - check open orders first, then fall back
         next_delivery_date_raw = None
         if my_orders:
             open_orders = my_orders.get('LstOpenOrders', [])
             if open_orders and len(open_orders) > 0:
-                # 1. Primary: Firm delivery window date
+                # 1. Primary: firm end of delivery window
                 next_delivery_date_raw = open_orders[0].get('estDeliveryWindowTo')
-                
-                # 2. Secondary: Fallback to start of delivery window
+                # 2. Start of delivery window
                 if not next_delivery_date_raw:
                     next_delivery_date_raw = open_orders[0].get('estDeliveryWindowFrom')
-                
-                # 3. Tertiary: Fallback to general order date if window isn't set
+                # 3. General order date if window not set
                 if not next_delivery_date_raw:
                     next_delivery_date_raw = open_orders[0].get('orderDate')
         
-        # 4. Quaternary: OneClick/Simulation Fallback
+        # 4. OneClick fallback
         if not next_delivery_date_raw and one_click:
-            # Check both the standard key and the 'EstimatedDelivery' range key
-            next_delivery_date_raw = one_click.get('NextDeliveryDate') or one_click.get('EstimatedDelivery')
+            next_delivery_date_raw = one_click.get('NextDeliveryDate')
         
-        # 5. Final Fallback: Account Level
+        # 5. Account level final fallback
         if not next_delivery_date_raw and account_data:
             next_delivery_date_raw = account_data.get('NextDeliveryDate', '')
         
-        # Parse and fix the timezone "rollback" issue
-        parsed_result = parse_date(next_delivery_date_raw)
-        
-        if parsed_result:
-            # Force tzinfo to None to prevent Home Assistant from shifting the date
-            if hasattr(parsed_result, 'replace'):
-                next_delivery_date = parsed_result.replace(tzinfo=None)
-            else:
-                next_delivery_date = parsed_result
-        else:
-            next_delivery_date = None
+        next_delivery_date = parse_date(next_delivery_date_raw)
         
         # Build service address
         street = account_data.get('Street', '')
