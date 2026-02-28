@@ -9,15 +9,13 @@
 
 ---
 
-## ✨ What's New in v3.0.10
+## ✨ What's New in v3.0.11
 
-### 🔧 Next Delivery Date Fix
+### 🐛 Date Timezone Fix
 
-Simplified the next delivery date lookup in `api.py`. The previous 5-level fallback chain (introduced in v3.0.8) was reading estimated delivery window fields that don't reliably exist across all account types, causing incorrect or missing next delivery dates for some users. It also applied a timezone strip workaround that was inconsistent with the rest of the date-handling pipeline.
+All date sensors (last delivery date, next delivery date, last tank reading, last payment date) were displaying one day early for users in US timezones. Date-only strings returned by the AmeriGas API have no timezone context, and the previous code attached UTC to them — causing Home Assistant to shift them back when converting to local time. Dates are now treated as local time using the HA-configured timezone, so they display correctly regardless of UTC offset.
 
-The lookup is now a clean 3-step chain — `DeliveryDate` from open orders, then `NextDeliveryDate` from the OneClick view, then the account-level fallback — and dates are parsed consistently with all other fields.
-
-**Also included:** v3.0.9 hardened the GitHub Actions CI workflow with minimal `permissions: contents: read` to resolve a CodeQL security alert. No integration code changed in v3.0.9.
+The next delivery date entity was also disappearing for some users after the v3.0.8 timezone strip workaround (`replace(tzinfo=None)`) produced a naive datetime that Home Assistant rejected for `SensorDeviceClass.TIMESTAMP` sensors. That workaround is now removed entirely. If the entity was deleted, it will be recreated automatically on restart after updating.
 
 ---
 
@@ -141,7 +139,11 @@ Data refreshes automatically at **00:00, 06:00, 12:00, and 18:00** daily, plus i
 
 ## 🔧 Troubleshooting
 
-**Next delivery date is wrong or missing** — Fixed in v3.0.10. Update and restart.
+**Date sensors showing the wrong day (one day early)** — Fixed in v3.0.11. Update and restart.
+
+**Next delivery date entity missing / HA prompting you to delete it** — Fixed in v3.0.11. Update and restart; the entity will be recreated automatically.
+
+**Next delivery date is wrong or missing** — Fixed in v3.0.10/v3.0.11. Update and restart.
 
 **Lifetime sensors reset to 0 on restart** — Fixed in v3.0.8. Update immediately if you see this. After updating, check logs for `State restoration complete. Lifetime total: XXX.XX gal`.
 
