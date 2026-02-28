@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.11] - 2026-02-28
+
+### 🐛 Bug Fix — Date Timezone Handling
+
+**Fixed: Date sensors rolling back one day for US timezones**
+
+All date fields returned by the AmeriGas API — last delivery date, next delivery date, last tank reading, last payment date — can arrive as date-only strings with no time or timezone component (e.g., `01/15/2026`). The previous code attached `timezone.utc` to these naive datetimes, which caused Home Assistant to convert them to local time and display the date as the day before for any timezone behind UTC (all US timezones).
+
+**Solution**: Naive datetimes are now treated as local time by attaching `dt_util.get_default_time_zone()` — the HA-configured timezone from Settings → System → General — instead of UTC. A date-only string like `01/15/2026` is now stored as midnight local time and displays correctly regardless of UTC offset.
+
+**Fixed: Next delivery date sensor disappearing from Home Assistant**
+
+The `replace(tzinfo=None)` workaround introduced in v3.0.8 stripped timezone info from the next delivery date after parsing, producing a naive datetime. `AmeriGasNextDeliveryDateSensor` uses `SensorDeviceClass.TIMESTAMP`, which requires a timezone-aware datetime. Home Assistant rejected the naive value, marking the entity unavailable and eventually prompting users to delete it.
+
+**Solution**: Removed the `replace(tzinfo=None)` strip entirely. `parse_date()` now returns a timezone-aware datetime for all fields consistently, so no post-processing is needed.
+
+### 🔧 Technical Changes
+
+**`api.py` — `parse_date()`**
+- Changed naive datetime handling from `replace(tzinfo=timezone.utc)` to `replace(tzinfo=dt_util.get_default_time_zone())`
+- Affects all date fields: last delivery date, next delivery date, last tank reading, last payment date
+
+**`api.py` — `_parse_account_data()`**
+- Removed `replace(tzinfo=None)` post-processing strip on `next_delivery_date`
+- Removed surrounding `if/else` block — `parse_date()` result now assigned directly
+- Next delivery date fallback chain (`estDeliveryWindowTo` → `estDeliveryWindowFrom` → `orderDate` → `OneClickOrderViewModel.NextDeliveryDate` → `account_data.NextDeliveryDate`) preserved unchanged
+
+**`manifest.json`**
+- Version bumped to `3.0.11`
+
+### 🔄 Migration Notes
+
+No breaking changes. Update via HACS and restart. Date sensors will immediately reflect the corrected timezone handling. If the Next Delivery Date entity was deleted, it will be recreated automatically after restart — no manual action required beyond the update.
+
+---
+
 ## [3.0.10] - 2026-02-28
 
 ### 🔧 API Fix — Next Delivery Date Lookup Simplified
