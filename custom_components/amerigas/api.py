@@ -197,13 +197,37 @@ class AmeriGasAPI:
         if my_orders:
             open_orders = my_orders.get('LstOpenOrders', [])
             if open_orders and len(open_orders) > 0:
-                next_delivery_date_raw = open_orders[0].get('DeliveryDate', '')
-            if not next_delivery_date_raw and one_click:
-                next_delivery_date_raw = one_click.get('NextDeliveryDate', '')
-        if not next_delivery_date_raw:
+                # 1. Primary: Firm delivery window date
+                next_delivery_date_raw = open_orders[0].get('estDeliveryWindowTo')
+                
+                # 2. Secondary: Fallback to start of delivery window
+                if not next_delivery_date_raw:
+                    next_delivery_date_raw = open_orders[0].get('estDeliveryWindowFrom')
+                
+                # 3. Tertiary: Fallback to general order date if window isn't set
+                if not next_delivery_date_raw:
+                    next_delivery_date_raw = open_orders[0].get('orderDate')
+        
+        # 4. Quaternary: OneClick/Simulation Fallback
+        if not next_delivery_date_raw and one_click:
+            # Check both the standard key and the 'EstimatedDelivery' range key
+            next_delivery_date_raw = one_click.get('NextDeliveryDate') or one_click.get('EstimatedDelivery')
+        
+        # 5. Final Fallback: Account Level
+        if not next_delivery_date_raw and account_data:
             next_delivery_date_raw = account_data.get('NextDeliveryDate', '')
         
-        next_delivery_date = parse_date(next_delivery_date_raw)
+        # Parse and fix the timezone "rollback" issue
+        parsed_result = parse_date(next_delivery_date_raw)
+        
+        if parsed_result:
+            # Force tzinfo to None to prevent Home Assistant from shifting the date
+            if hasattr(parsed_result, 'replace'):
+                next_delivery_date = parsed_result.replace(tzinfo=None)
+            else:
+                next_delivery_date = parsed_result
+        else:
+            next_delivery_date = None
         
         # Build service address
         street = account_data.get('Street', '')
