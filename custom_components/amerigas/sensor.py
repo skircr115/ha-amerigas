@@ -15,6 +15,7 @@ from homeassistant.const import (
     PERCENTAGE,
     UnitOfEnergy,
     UnitOfVolume,
+    UnitOfVolumeFlowRate,
 )
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import EntityCategory
@@ -387,10 +388,11 @@ class AmeriGasLastPaymentDateSensor(AmeriGasSensorBase):
     
     _attr_name = "Last Payment Date"
     _attr_unique_id = "amerigas_last_payment_date"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
     _attr_icon = "mdi:calendar-check"
     
     @property
-    def native_value(self) -> str | None:
+    def native_value(self) -> datetime | None:
         """Return last payment date."""
         return self.coordinator.data.get("last_payment_date")
 
@@ -670,13 +672,14 @@ class PropaneEnergyConsumptionSensor(AmeriGasSensorBase):
 class PropaneDailyAverageUsageSensor(AmeriGasSensorBase):
     """Daily average usage sensor.
     
-    v3.0.7: Now uses _calculate_daily_average() which internally uses
-    _calculate_used_since_delivery() with pre-delivery level support.
+    v3.0.12: Now uses UnitOfVolumeFlowRate.GALLONS_PER_DAY and adds
+    SensorDeviceClass.VOLUME_FLOW_RATE. Also updated attribute to match.
     """
     
     _attr_name = "Daily Average Usage"
     _attr_unique_id = "propane_daily_average_usage"
-    _attr_native_unit_of_measurement = "gal/day"
+    _attr_native_unit_of_measurement = UnitOfVolumeFlowRate.GALLONS_PER_DAY
+    _attr_device_class = SensorDeviceClass.VOLUME_FLOW_RATE
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = "mdi:chart-line"
     
@@ -716,7 +719,7 @@ class PropaneDailyAverageUsageSensor(AmeriGasSensorBase):
             days = (now - last_date).days
             attrs["days_since_delivery"] = days
             if used and days > 0:
-                attrs["calculation"] = f"{used:.2f} gal ÷ {days} days = {used/days:.4f} gal/day"
+                attrs["calculation"] = f"{used:.2f} gal ÷ {days} days = {used/days:.4f} gal/d"
         
         return attrs
 

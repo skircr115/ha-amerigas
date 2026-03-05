@@ -237,7 +237,7 @@ class AmeriGasAPI:
             # Financial
             'amount_due': safe_float(account_data.get('AmounDue'), 0.0),
             'account_balance': safe_float(account_data.get('AccountBalance'), 0.0),
-            'last_payment_date': account_data.get('LastPaymentDate'),
+            'last_payment_date': parse_date(account_data.get('LastPaymentDate')),
             'last_payment_amount': safe_float(account_data.get('LastPaymentAmount'), 0.0),
             
             # Tank Monitor
