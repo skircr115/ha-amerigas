@@ -1,0 +1,39 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "AmeriGas Propane",
+        "description": "Enter your AmeriGas account credentials.",
+        "data": {
+          "username": "Email Address",
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to AmeriGas. Please try again.",
+      "invalid_auth": "Invalid email address or password.",
+      "unknown": "Unexpected error. Check the Home Assistant logs for details."
+    },
+    "abort": {
+      "already_configured": "AmeriGas account is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Update AmeriGas Credentials",
+        "description": "Update your AmeriGas account credentials. Enter your username and re-enter your password.",
+        "data": {
+          "username": "Email Address",
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to AmeriGas. Please try again.",
+      "invalid_auth": "Invalid email address or password.",
+      "unknown": "Unexpected error. Check the Home Assistant logs for details."
+    }
+  }
+}
