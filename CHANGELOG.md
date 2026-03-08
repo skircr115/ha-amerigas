@@ -5,6 +5,58 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0] - 2026-03-08
+
+### 🔐 New Feature — In-Place Credential Updates
+
+Users can now update their AmeriGas username or password without deleting and re-adding the integration. A **Configure** button now appears on the AmeriGas integration card under **Settings → Devices & Services**. The credentials are validated before saving; if validation fails the form stays open with an error. The update takes effect on the next coordinator refresh with no restart required and no loss of historical data or Energy Dashboard statistics.
+
+**Implementation**: Added `OptionsFlow` class to `config_flow.py` and wired it via `async_get_options_flow()` on `ConfigFlow`. The username field is pre-filled with the current value so users only need to re-enter the password. Per HA 2025.12+ requirements, `config_entry` is accessed as a read-only injected property rather than being passed to `__init__` — passing it manually caused an `AttributeError` (500 Internal Server Error) in earlier implementations.
+
+### 📊 Enhancement — Daily Average Usage: Proper Unit & Device Class
+
+`sensor.propane_daily_average_usage` now declares `SensorDeviceClass.VOLUME_FLOW_RATE` and uses `UnitOfVolumeFlowRate.GALLONS_PER_DAY` (`gal/d`) instead of the previous bare string `gal/day`. This is the correct HA representation for a consumption rate and enables proper unit conversion in the UI and Lovelace cards.
+
+**Migration note for existing installs**: Home Assistant will display a one-time unit-change prompt under **Developer Tools → Statistics** for `propane_daily_average_usage`. Accepting it corrects the historical unit metadata without altering the underlying recorded values.
+
+### 💳 Enhancement — Last Payment Date Fully Timestamp-Aware
+
+`sensor.amerigas_last_payment_date` previously received the raw string from the API layer and relied on HA to interpret it. The `api.py` `_parse_account_data()` method now parses `LastPaymentDate` through `parse_date()` and returns a timezone-aware `datetime`, consistent with every other date field. This ensures `SensorDeviceClass.TIMESTAMP` rendering is correct and prevents display inconsistencies for users with non-UTC timezones.
+
+### 💳 Enhancement — Payment Terms Days Attribute
+
+`sensor.amerigas_amount_due` now exposes a `payment_terms_days` integer attribute parsed from the `PaymentTermsUpDate` string (e.g. `"Due within 1 day"` → `1`, `"Due within 30 days"` → `30`). Falls back to `30` if the field is absent or unparseable. This value is used internally by cost-per-gallon correlation logic and is also available for automations (e.g. alert if payment is due within N days).
+
+### 🔧 Technical Changes
+
+**`config_flow.py`**
+- Added `OptionsFlow` class implementing `async_step_init()` with credential pre-fill and full validation
+- Added `async_get_options_flow()` static method to `ConfigFlow` returning `OptionsFlow()`
+- `OptionsFlow` uses HA 2025.12+ pattern: no `__init__` override; `self.config_entry` accessed as injected property
+- `async_update_entry()` called on successful validation to apply credential changes in place
+
+**`api.py` — `_parse_account_data()`**
+- `last_payment_date` now assigned via `parse_date()` instead of passing the raw string
+- Added `payment_terms_days` field: integer extracted from `PaymentTermsUpDate` via `re.search(r'\d+', ...)`; defaults to `30`
+
+**`sensor.py` — `PropaneDailyAverageUsageSensor`**
+- `_attr_native_unit_of_measurement` changed from `"gal/day"` to `UnitOfVolumeFlowRate.GALLONS_PER_DAY`
+- `_attr_device_class` added: `SensorDeviceClass.VOLUME_FLOW_RATE`
+
+**`sensor.py` — `AmeriGasAmountDueSensor`**
+- `extra_state_attributes` now includes `payment_terms_days` integer alongside the existing `payment_terms` raw string
+
+**`manifest.json`**
+- Version bumped to `3.1.0`
+
+### 🔄 Migration Notes
+
+No breaking changes. Update via HACS and restart. All existing sensors, entity IDs, automations, and Energy Dashboard configuration continue working without modification.
+
+If Home Assistant shows a Statistics unit-change prompt for `propane_daily_average_usage`, accept it — this is expected and safe.
+
+---
+
 ## [3.0.11] - 2026-02-28
 
 ### 🐛 Bug Fix — Date Timezone Handling

@@ -2,8 +2,8 @@
   "config": {
     "step": {
       "user": {
-        "title": "Set up AmeriGas Propane",
-        "description": "Enter your MyAmeriGas account credentials",
+        "title": "AmeriGas Propane",
+        "description": "Enter your AmeriGas account credentials.",
         "data": {
           "username": "Email Address",
           "password": "Password"
@@ -19,7 +19,24 @@
       "already_configured": "This account is already configured."
     }
   },
-  "services": {
+  "options": {
+    "step": {
+      "init": {
+        "title": "Update AmeriGas Credentials",
+        "description": "Update your AmeriGas account credentials. Enter your username and re-enter your password.",
+        "data": {
+          "username": "Email Address",
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to AmeriGas. Please try again.",
+      "invalid_auth": "Invalid email address or password.",
+      "unknown": "Unexpected error. Check the Home Assistant logs for details."
+    }
+  },
+    "services": {
     "set_pre_delivery_level": {
       "name": "Set Pre-Delivery Level",
       "description": "Manually set the pre-delivery tank level for accurate consumption tracking.",

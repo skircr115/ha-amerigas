@@ -9,13 +9,23 @@
 
 ---
 
-## ✨ What's New in v3.0.11
+## ✨ What's New in v3.1.0
 
-### 🐛 Date Timezone Fix
+### 🔐 Update Credentials Without Reinstalling
 
-All date sensors (last delivery date, next delivery date, last tank reading, last payment date) were displaying one day early for users in US timezones. Date-only strings returned by the AmeriGas API have no timezone context, and the previous code attached UTC to them — causing Home Assistant to shift them back when converting to local time. Dates are now treated as local time using the HA-configured timezone, so they display correctly regardless of UTC offset.
+You can now update your AmeriGas username or password directly from the integration's Configure dialog — no need to delete and re-add the integration. Go to **Settings → Devices & Services → AmeriGas → Configure** and enter your updated credentials. The change takes effect on the next data refresh with no restart required and no loss of historical data.
 
-The next delivery date entity was also disappearing for some users after the v3.0.8 timezone strip workaround (`replace(tzinfo=None)`) produced a naive datetime that Home Assistant rejected for `SensorDeviceClass.TIMESTAMP` sensors. That workaround is now removed entirely. If the entity was deleted, it will be recreated automatically on restart after updating.
+### 📊 Daily Average Usage — Proper Unit & Device Class
+
+`sensor.propane_daily_average_usage` now uses `gal/d` (gallons per day) with `SensorDeviceClass.VOLUME_FLOW_RATE`, the correct HA representation for a flow rate. Previously the sensor used a plain `gal/day` string unit with no device class, which caused inconsistent display and prevented unit conversion in the UI.
+
+**Migration note:** If you had this sensor tracked in the Statistics database before v3.1.0, Home Assistant will show a one-time unit-change prompt under **Developer Tools → Statistics**. Accepting it is safe and expected — it corrects the historical unit metadata without affecting the underlying values.
+
+### 💳 Payment Date & Terms Improvements
+
+`sensor.amerigas_last_payment_date` now correctly uses `SensorDeviceClass.TIMESTAMP` end-to-end: the API layer returns a timezone-aware `datetime` object instead of the raw string it previously passed through. This prevents subtle display issues and makes the sensor consistent with all other date sensors.
+
+`sensor.amerigas_amount_due` gains a new `payment_terms_days` attribute (integer) parsed from the `PaymentTermsUpDate` field (e.g. `"Due within 1 day"` → `1`). This is used internally to improve cost-per-gallon accuracy but is also available for automations.
 
 ---
 
@@ -48,11 +58,12 @@ The next delivery date entity was also disappearing for some users after the v3.
 ## 📦 Installation
 
 ### HACS (Recommended)
-
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=skircr115&repository=ha-amerigas&category=Integration)
+ 
+ -OR-
 1. Open HACS → Integrations
-2. Click ⋮ → Custom repositories
-3. Add `https://github.com/skircr115/ha-amerigas` (Category: Integration)
-4. Install "AmeriGas Propane" and restart Home Assistant
+2. Search for "AmeriGas Propane"
+4. Install and restart Home Assistant
 
 ### Manual
 
@@ -67,6 +78,10 @@ The next delivery date entity was also disappearing for some users after the v3.
 1. **Settings** → **Devices & Services** → **+ Add Integration**
 2. Search "AmeriGas" and select it
 3. Enter your MyAmeriGas account credentials and click **Submit**
+
+### Updating Credentials (v3.1.0+)
+
+If your password changes, go to **Settings → Devices & Services → AmeriGas → Configure** and re-enter your credentials. No restart needed and no historical data is lost.
 
 ### What Gets Created
 
@@ -139,6 +154,10 @@ Data refreshes automatically at **00:00, 06:00, 12:00, and 18:00** daily, plus i
 
 ## 🔧 Troubleshooting
 
+**Need to update your password?** — Use Settings → Devices & Services → AmeriGas → Configure (v3.1.0+). No reinstall required.
+
+**Daily Average Usage unit change prompt in Statistics** — Expected after upgrading to v3.1.0. Go to Developer Tools → Statistics, find `propane_daily_average_usage`, and accept the unit fix. Safe to confirm.
+
 **Date sensors showing the wrong day (one day early)** — Fixed in v3.0.11. Update and restart.
 
 **Next delivery date entity missing / HA prompting you to delete it** — Fixed in v3.0.11. Update and restart; the entity will be recreated automatically.
@@ -193,7 +212,7 @@ entities:
 ## 🔄 Upgrading
 
 ### From any v3.0.x
-No breaking changes across the v3.0.x series. Update via HACS and restart. All sensors, entities, and automations continue working without modification.
+No breaking changes. Update via HACS and restart. All sensors, entities, and automations continue working without modification. If upgrading from a version prior to v3.1.0, see the Daily Average Usage note in the Troubleshooting section above.
 
 ### From v2.x (pyscript)
 See [MIGRATION.md](MIGRATION.md) for detailed instructions.
