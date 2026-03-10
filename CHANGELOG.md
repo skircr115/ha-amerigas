@@ -5,6 +5,58 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.1] - 2026-03-10
+
+### 🐛 Bug Fix — Stale Gallons Captured on Date-Change Trigger
+
+**Fixed: Pre-delivery level captured against wrong delivery amount when portal updates date and gallons in separate API responses**
+
+The date-change trigger in `DeliveryTracker` fired as soon as `last_delivery_date` changed, immediately calling `_capture_pre_delivery_level_from_api()`. If the portal had not yet updated `last_delivery_gallons` to reflect the new delivery, the calculation used the prior delivery's gallons figure — e.g. `420 - 28.1 = 391.9` instead of the correct `420 - 255.9 = 164.1`. The wrong pre-delivery level then cascaded into incorrect values for Used Since Delivery, Daily Average Usage, Days Until Empty, Cost Since Delivery, and Days Remaining Difference.
+
+**Fix:** `DeliveryTracker` now tracks `last_delivery_gallons` across polls alongside `last_delivery_date`. When the date changes but gallons is unchanged, capture is deferred (`_pending_api_capture = True`) and fires on the subsequent poll when gallons updates. If both change in the same poll (normal case), capture fires immediately as before. A new level-jump trigger (Trigger 1) fires immediately when the tank monitor reports an increase ≥ 10 gallons between polls, capturing both `pre_fill` and `post_fill` directly from the tank monitor — the most accurate baseline, entirely independent of portal lag.
+
+### 🐛 Bug Fix — Cost Per Gallon Incorrect Immediately After Delivery
+
+**Fixed: Cost per gallon using previous delivery's payment until new invoice is paid**
+
+`_calculate_cost_per_gallon()` unconditionally used `last_payment_amount / last_delivery_gallons`. Immediately after a delivery, `last_payment_amount` reflects a prior payment, producing a wrong cost per gallon (e.g. `$230.50 / 255.9 gal = $0.90/gal` instead of the actual `~$3.44/gal`).
+
+**Fix:** If `last_payment_date < last_delivery_date`, the sensor uses `account_balance` (preferred) or `amount_due` as the numerator, since those fields reflect the outstanding charge for the current delivery. The sensor reverts to `last_payment_amount` automatically once payment is recorded and `last_payment_date` advances past `last_delivery_date`.
+
+### 🔧 Technical Changes
+
+**`delivery_tracker.py` — `DeliveryTracker.__init__()`**
+- Added `_last_known_delivery_gallons: float = 0.0`
+- Added `_pending_api_capture: bool = False`
+
+**`delivery_tracker.py` — `DeliveryTracker._handle_coordinator_update()`**
+- Trigger 2 split into three paths: immediate capture, deferred capture, and deferred-capture resolution
+- `_last_known_delivery_gallons` updated every poll
+
+**`sensor.py` — `AmeriGasSensorBase._calculate_cost_per_gallon()`**
+- Added `last_payment_date` / `last_delivery_date` comparison
+- Uses `account_balance` → `amount_due` fallback when payment predates delivery
+- Existing `last_payment_amount` path unchanged for current-payment case
+
+**`manifest.json`**
+- Version bumped to `3.1.1`
+
+### 🔄 Migration Notes
+
+No breaking changes. Update via HACS and restart.
+
+If you installed v3.1.1 after a recent delivery (level-jump trigger was not running at delivery time), set the pre-delivery level manually:
+
+```yaml
+service: amerigas.set_pre_delivery_level
+data:
+  gallons: 145.0  # your actual pre-delivery level in gallons
+```
+
+Cost per gallon self-corrects automatically once the delivery invoice is paid.
+
+---
+
 ## [3.1.0] - 2026-03-08
 
 ### 🔐 New Feature — In-Place Credential Updates
@@ -63,33 +115,26 @@ If Home Assistant shows a Statistics unit-change prompt for `propane_daily_avera
 
 **Fixed: Date sensors rolling back one day for US timezones**
 
-All date fields returned by the AmeriGas API — last delivery date, next delivery date, last tank reading, last payment date — can arrive as date-only strings with no time or timezone component (e.g., `01/15/2026`). The previous code attached `timezone.utc` to these naive datetimes, which caused Home Assistant to convert them to local time and display the date as the day before for any timezone behind UTC (all US timezones).
+All date fields returned by the AmeriGas API can arrive as date-only strings with no time or timezone component (e.g., `01/15/2026`). The previous code attached `timezone.utc` to these naive datetimes, which caused Home Assistant to convert them to local time and display the date as the day before for any timezone behind UTC (all US timezones).
 
-**Solution**: Naive datetimes are now treated as local time by attaching `dt_util.get_default_time_zone()` — the HA-configured timezone from Settings → System → General — instead of UTC. A date-only string like `01/15/2026` is now stored as midnight local time and displays correctly regardless of UTC offset.
+**Solution**: Naive datetimes are now treated as local time by attaching `dt_util.get_default_time_zone()` instead of UTC.
 
 **Fixed: Next delivery date sensor disappearing from Home Assistant**
 
-The `replace(tzinfo=None)` workaround introduced in v3.0.8 stripped timezone info from the next delivery date after parsing, producing a naive datetime. `AmeriGasNextDeliveryDateSensor` uses `SensorDeviceClass.TIMESTAMP`, which requires a timezone-aware datetime. Home Assistant rejected the naive value, marking the entity unavailable and eventually prompting users to delete it.
+The `replace(tzinfo=None)` workaround stripped timezone info after parsing, producing a naive datetime that HA rejected for `SensorDeviceClass.TIMESTAMP`, marking the entity unavailable.
 
-**Solution**: Removed the `replace(tzinfo=None)` strip entirely. `parse_date()` now returns a timezone-aware datetime for all fields consistently, so no post-processing is needed.
+**Solution**: Removed the `replace(tzinfo=None)` strip entirely.
 
 ### 🔧 Technical Changes
 
 **`api.py` — `parse_date()`**
 - Changed naive datetime handling from `replace(tzinfo=timezone.utc)` to `replace(tzinfo=dt_util.get_default_time_zone())`
-- Affects all date fields: last delivery date, next delivery date, last tank reading, last payment date
 
 **`api.py` — `_parse_account_data()`**
 - Removed `replace(tzinfo=None)` post-processing strip on `next_delivery_date`
-- Removed surrounding `if/else` block — `parse_date()` result now assigned directly
-- Next delivery date fallback chain (`estDeliveryWindowTo` → `estDeliveryWindowFrom` → `orderDate` → `OneClickOrderViewModel.NextDeliveryDate` → `account_data.NextDeliveryDate`) preserved unchanged
 
 **`manifest.json`**
 - Version bumped to `3.0.11`
-
-### 🔄 Migration Notes
-
-No breaking changes. Update via HACS and restart. Date sensors will immediately reflect the corrected timezone handling. If the Next Delivery Date entity was deleted, it will be recreated automatically after restart — no manual action required beyond the update.
 
 ---
 
@@ -97,32 +142,14 @@ No breaking changes. Update via HACS and restart. Date sensors will immediately 
 
 ### 🔧 API Fix — Next Delivery Date Lookup Simplified
 
-**Fixed: Next delivery date showing incorrect or missing values**
-
-The multi-stage fallback chain for resolving `next_delivery_date` introduced in v3.0.8 was over-engineered and caused incorrect results for some account configurations. The logic was attempting to read estimated delivery window fields (`estDeliveryWindowTo`, `estDeliveryWindowFrom`, `orderDate`, `EstimatedDelivery`) that do not reliably exist or contain useful data across all account types. Additionally, the old code applied a timezone strip (`replace(tzinfo=None)`) as a workaround to prevent Home Assistant from shifting the displayed date — an approach that introduced subtle inconsistencies with the rest of the date-handling pipeline.
-
-**Solution**: Reverted to a clean, direct 3-level lookup chain and removed the timezone strip entirely, letting `parse_date()` handle the result consistently with all other date fields.
+Reverted to a clean 3-level lookup chain and removed the timezone strip entirely.
 
 **New lookup order:**
 1. `LstOpenOrders[0].DeliveryDate` (primary)
 2. `OneClickOrderViewModel.NextDeliveryDate` (fallback)
 3. `account_data.NextDeliveryDate` (final fallback)
 
-### 🔧 Technical Changes
-
-**`api.py` — `_parse_account_data()`**
-- Replaced 5-level fallback chain with a clean 3-level lookup
-- Changed primary open-orders key from `estDeliveryWindowTo` → `DeliveryDate`
-- Removed intermediate fallbacks for `estDeliveryWindowFrom`, `orderDate`, and `EstimatedDelivery`
-- Removed timezone strip (`parsed_result.replace(tzinfo=None)`) workaround
-- `next_delivery_date` now assigned directly via `parse_date()`, consistent with all other date fields
-
-**`manifest.json`**
-- Version bumped to `3.0.10`
-
-### 🔄 Migration Notes
-
-No breaking changes. Update via HACS and restart. The next delivery date sensor will immediately reflect the corrected lookup logic.
+**`manifest.json`** — version bumped to `3.0.10`
 
 ---
 
@@ -130,25 +157,9 @@ No breaking changes. Update via HACS and restart. The next delivery date sensor 
 
 ### 🔒 CI Security — Workflow Permissions Hardening
 
-**Fixed: GitHub Actions workflow missing explicit permissions (CodeQL alert #1)**
+Added `permissions: contents: read` to `hassfest.yml`. No integration code changed.
 
-The `hassfest.yml` validation workflow did not declare an explicit `permissions` block, meaning the `GITHUB_TOKEN` was granted broader default scopes than necessary for a read-only validation job.
-
-**Solution**: Added `permissions: contents: read` to the `validate` job in `.github/workflows/hassfest.yml`. This scopes the token to the minimum required (fetching the repository to run hassfest) and resolves the GitHub code scanning alert.
-
-No integration code was changed in this release.
-
-### 🔧 Technical Changes
-
-**`.github/workflows/hassfest.yml`**
-- Added `permissions: contents: read` under the `validate` job
-
-**`manifest.json`**
-- Version bumped to `3.0.9`
-
-### 🔄 Migration Notes
-
-No changes to integration behavior. This is a CI/repository hygiene release only.
+**`manifest.json`** — version bumped to `3.0.9`
 
 ---
 
@@ -156,30 +167,11 @@ No changes to integration behavior. This is a CI/repository hygiene release only
 
 ### 🐛 Critical Bug Fix — Energy Dashboard Data Integrity
 
-**Fixed: Lifetime sensors resetting to 0 on Home Assistant restart**
+- Fixed race condition where coordinator updated before state restoration, writing `0.0` to the database and corrupting Energy Dashboard historical data
+- Fixed lifetime sensors resetting when AmeriGas API is temporarily unreachable
+- Fixed API timeouts — `API_TIMEOUT` increased from 30 → 45 seconds
 
-- **Root cause**: Race condition where the coordinator fired an update before `async_added_to_hass()` completed state restoration, writing `0.0` to the database and permanently corrupting Energy Dashboard historical data
-- **Solution**: Added `_restoration_complete` flag to `PropaneLifetimeGallonsSensor`; coordinator updates are blocked until restoration finishes
-- **Affected sensors**: Propane Lifetime Gallons, Propane Lifetime Energy
-
-**Fixed: Lifetime sensors resetting when AmeriGas API is temporarily unreachable**
-- Existing lifetime total is now preserved when the API returns errors or timeouts
-
-**Fixed: API timeout causing "unavailable" sensor states**
-- `API_TIMEOUT` increased from 30 → 45 seconds in `const.py` to accommodate AmeriGas server latency
-
-### 🔧 Technical Changes
-
-- `sensor.py` — `PropaneLifetimeGallonsSensor`: added `_restoration_complete` flag, coordinator update guard, API-outage value preservation, `restoration_complete` diagnostic attribute
-- `const.py` — `API_TIMEOUT` changed from `30` to `45`
-- `manifest.json` — version bumped to `3.0.8`
-
-### 🔄 Migration Notes
-
-Critical update for all users. No breaking changes. Update via HACS and restart. Verify restoration in logs:
-```
-State restoration complete. Lifetime total: XXX.XX gal
-```
+**`manifest.json`** — version bumped to `3.0.8`
 
 ---
 
@@ -187,25 +179,10 @@ State restoration complete. Lifetime total: XXX.XX gal
 
 ### 🐛 Critical Bug Fixes — Race Condition in Sensor Updates
 
-**Fixed: Sensors not updating when pre-delivery level changes**
-- Moved pre-delivery level state-change listener from `PropaneUsedSinceDeliverySensor` to `AmeriGasSensorBase` so all dependent sensors recalculate immediately
-
-**Fixed: Daily Average Usage showing 0.0000 gal/day**
-- Refactored `PropaneDailyAverageUsageSensor` to use centralized `_calculate_daily_average()` helper
-
-**Fixed: Energy Consumption (Display) showing "unknown"**
-- Now calculates directly from coordinator data via centralized helper
-
-**Fixed: Days Until Empty showing "unavailable" for low usage**
-- Sensor now always calculates days regardless of usage rate; caps at 9,999 for extremely low usage (< 0.001 gal/day)
-
-**Fixed: Days Remaining Difference showing "unknown"**
-- Always calculates the difference; caps at 9,999 for extremely low usage
-
-### ✨ Enhancements
-
-- Added `_get_pre_delivery_level()` centralized helper to `AmeriGasSensorBase`
-- Added `calculation_method`, `calculation`, and `note` attributes to usage-dependent sensors
+- Fixed sensors not updating when pre-delivery level changes
+- Fixed Daily Average Usage showing 0.0000 gal/day
+- Fixed Energy Consumption (Display) showing "unknown"
+- Fixed Days Until Empty and Days Remaining Difference showing "unavailable"
 
 ---
 
@@ -213,17 +190,7 @@ State restoration complete. Lifetime total: XXX.XX gal
 
 ### 🕐 Cron-Based Refresh Schedule
 
-- Replaced `timedelta(hours=6)` with `async_track_time_change()` firing at 00:00, 06:00, 12:00, 18:00 daily
-- Immediate fetch on HA startup preserved
-
-### 🐛 Bug Fixes
-
-- Fixed `Error doing job: Unclosed connection (None)` — aiohttp session now closed in `finally` block after each fetch and after config flow validation
-
-### 📦 HACS Compliance
-
-- `hacs.json`: added `hacs`, `zip_release`, `filename` fields
-- `strings.json`: added service translations for `set_pre_delivery_level` and `refresh_data`
+Replaced `timedelta(hours=6)` with `async_track_time_change()` firing at 00:00, 06:00, 12:00, 18:00 daily. Fixed unclosed aiohttp connection warning.
 
 ---
 
@@ -231,48 +198,35 @@ State restoration complete. Lifetime total: XXX.XX gal
 
 ### 🎯 Major Features
 
-- **Automatic pre-delivery level detection** — when `last_delivery_date` changes, calculates `pre_delivery = current - delivery_amount` automatically with 100% accuracy for any delivery size
-- **`amerigas.set_pre_delivery_level` service** — manually set pre-delivery level for historical deliveries or corrections
-- **`amerigas.refresh_data` service** — force immediate API refresh on demand
-- **`number.amerigas_pre_delivery_level` entity** — persists auto-captured value across restarts; manually adjustable
-- **Fixed estimated refill cost** — changed from 100% fill assumption to industry-standard 80%
-
-### 🔧 New Files
-
-- `delivery_tracker.py`, `number.py`, `services.yaml`
+- Automatic pre-delivery level detection
+- `amerigas.set_pre_delivery_level` service
+- `amerigas.refresh_data` service
+- `number.amerigas_pre_delivery_level` entity
+- Fixed estimated refill cost to use 80% fill assumption
 
 ---
 
 ## [3.0.4] - 2025-01-02
 
-### 🎯 Refactor — Eliminate Entity ID Dependencies
-
-- All cross-sensor dependencies now use coordinator data or direct sensor references
-- Sensors work correctly regardless of entity ID renaming in the UI
+Eliminated entity ID dependencies — all cross-sensor references now use coordinator data or direct sensor references.
 
 ---
 
 ## [3.0.3] - 2025-01-02
 
-### 🐛 Hotfix — Entity ID References
-
-- Fixed incorrect `propane_tank_` prefix in cross-sensor entity ID lookups causing calculated sensors to show "unknown"
+Hotfix — fixed incorrect `propane_tank_` prefix in cross-sensor entity ID lookups.
 
 ---
 
 ## [3.0.2] - 2025-01-02
 
-### 🐛 Hotfix — Lifetime Sensor State Restoration
-
-- Fixed `AttributeError: 'str' object has no attribute 'isoformat'` on restart in lifetime gallons sensor
+Hotfix — fixed `AttributeError: 'str' object has no attribute 'isoformat'` on restart in lifetime gallons sensor.
 
 ---
 
 ## [3.0.1] - 2025-01-02
 
-### 🐛 Hotfix — Timezone-Aware Datetimes
-
-- All datetime values now return timezone-aware objects as required by Home Assistant; fixed 4 sensors that failed to load
+Hotfix — all datetime values now return timezone-aware objects as required by Home Assistant.
 
 ---
 
