@@ -191,6 +191,23 @@ class AmeriGasSensorBase(CoordinatorEntity, SensorEntity):
 
         return None
 
+    def _get_post_fill_gallons(self) -> float | None:
+        """Get the post-fill tank monitor reading stored by DeliveryTracker.
+
+        v3.1.1: Set by the level-jump trigger in DeliveryTracker when a
+        delivery is detected via tank monitor telemetry. Represents the actual
+        tank level immediately after a fill — the only baseline guaranteed to
+        be accurate regardless of what the delivery slip or API report.
+
+        Returns None when not available (date-change-only path or manual set),
+        in which case _calculate_used_since_delivery falls back to
+        pre_delivery_level + last_delivery_gallons (v3.1.0 behaviour).
+        """
+        if not hasattr(self, 'hass') or self.hass is None:
+            return None
+        value = self.hass.data.get(DOMAIN, {}).get("post_fill_gallons", 0.0)
+        return value if value and value > 0 else None
+
     def _calculate_gallons_remaining(self) -> float | None:
         """Calculate gallons remaining from coordinator data."""
         tank_size = self.coordinator.data.get("tank_size") or DEFAULT_TANK_SIZE
@@ -208,10 +225,27 @@ class AmeriGasSensorBase(CoordinatorEntity, SensorEntity):
         return round(tank_size * (percent / 100), 2)
 
     def _calculate_used_since_delivery(self) -> tuple[float | None, str]:
-        """Calculate gallons used since delivery from coordinator data.
+        """Calculate gallons used since delivery.
 
-        v3.0.7: Now uses auto-captured pre-delivery level if available.
-        Returns tuple of (gallons_used, calculation_method).
+        v3.1.1: Priority order for the post-fill baseline:
+
+        1. **post_fill_gallons** (tank monitor, level-jump trigger) — actual
+           monitor reading at delivery time. Most accurate; unaffected by slip
+           or API discrepancies. used = post_fill - current.
+
+        2. **pre_delivery_level + last_delivery_gallons** (v3.1.0 / API
+           fallback) — used when the level-jump trigger did not fire (date-
+           change-only path or manual set). Accurate once the portal updates
+           last_delivery_gallons. This is the original v3.1.0 formula.
+
+        3. **Heuristic estimates** — unchanged fallback of last resort.
+
+        Why not trust the slip?
+        The delivery slip measures what came out of the truck; the tank monitor
+        measures what is in the tank. Temperature, meter calibration, and hose
+        residuals mean these numbers routinely differ by 10–20+ gallons. Only
+        the tank monitor is a consistent instrument measuring the same vessel
+        across every event.
         """
         tank_size = self.coordinator.data.get("tank_size") or DEFAULT_TANK_SIZE
         tank_level = self.coordinator.data.get("tank_level") or 0
@@ -225,13 +259,26 @@ class AmeriGasSensorBase(CoordinatorEntity, SensorEntity):
         current = tank_size * (tank_level / 100)
         last_delivery = self.coordinator.data.get("last_delivery_gallons") or 0
 
-        # v3.0.7: Check for auto-captured pre-delivery level
+        # v3.1.1: Check for tank-monitor post-fill reading first (level-jump trigger)
+        post_fill_gallons = self._get_post_fill_gallons()
+        # v3.0.7: Fall back to auto-captured pre-delivery level if available
         pre_delivery_level = self._get_pre_delivery_level()
 
-        if pre_delivery_level and pre_delivery_level > 0:
-            # Use auto-captured level (100% accurate)
+        if post_fill_gallons:
+            # Most accurate: tank monitor reading at delivery time.
+            # used = how far the tank has dropped from the post-fill reading.
+            used = post_fill_gallons - current
+            calculation_method = "tank_monitor"
+
+        elif pre_delivery_level and pre_delivery_level > 0:
+            # v3.1.0 API fallback: accurate once portal updates last_delivery_gallons.
             starting_level = pre_delivery_level + last_delivery
+            # Cap at tank capacity
+            if starting_level > tank_size:
+                starting_level = tank_size
+            used = starting_level - current
             calculation_method = "auto_captured"
+
         elif last_delivery > 0:
             # Fallback: Smart estimation based on delivery size
             if last_delivery < 50:
@@ -240,17 +287,14 @@ class AmeriGasSensorBase(CoordinatorEntity, SensorEntity):
             else:
                 estimated_before = tank_size * 0.20
                 calculation_method = "large_delivery_estimate"
-            starting_level = estimated_before + last_delivery
+            starting_level = min(estimated_before + last_delivery, tank_size)
+            used = starting_level - current
+
         else:
-            # Fallback: assume 80% fill
+            # Last resort: assume 80% fill
             starting_level = tank_size * DEFAULT_FILL_PERCENTAGE
+            used = starting_level - current
             calculation_method = "assumed_80_percent"
-
-        # Cap at tank capacity
-        if starting_level > tank_size:
-            starting_level = tank_size
-
-        used = starting_level - current
 
         return (max(0, round(used, 2)), calculation_method)
 
@@ -274,15 +318,39 @@ class AmeriGasSensorBase(CoordinatorEntity, SensorEntity):
             return None
 
         return round(used / days, 2)
-    
+
     def _calculate_cost_per_gallon(self) -> float | None:
-        """Calculate cost per gallon from coordinator data."""
-        payment = self.coordinator.data.get("last_payment_amount") or 0
+        """Calculate cost per gallon from coordinator data.
+
+        If last_payment_date predates last_delivery_date, the payment on record
+        is for a prior delivery cycle. Use account_balance (preferred) or
+        amount_due as the numerator instead, since that reflects what is owed
+        for the current delivery.
+        """
         delivery = self.coordinator.data.get("last_delivery_gallons") or 0
-        
         if delivery <= 0:
             return None
-        
+
+        last_payment_date = self.coordinator.data.get("last_payment_date")
+        last_delivery_date = self.coordinator.data.get("last_delivery_date")
+
+        if (
+            last_payment_date
+            and last_delivery_date
+            and last_payment_date < last_delivery_date
+        ):
+            # Payment predates delivery — use outstanding balance for current delivery cost.
+            account_balance = self.coordinator.data.get("account_balance") or 0
+            amount_due = self.coordinator.data.get("amount_due") or 0
+            numerator = account_balance if account_balance > 0 else amount_due
+            if numerator <= 0:
+                return None
+            return round(numerator / delivery, 2)
+
+        # Payment is current — use last payment amount as normal.
+        payment = self.coordinator.data.get("last_payment_amount") or 0
+        if payment <= 0:
+            return None
         return round(payment / delivery, 2)
 
 
@@ -571,10 +639,15 @@ class PropaneGallonsRemainingSensor(AmeriGasSensorBase):
 
 
 class PropaneUsedSinceDeliverySensor(AmeriGasSensorBase):
-    """Used since delivery sensor with v3.0.7 improvements.
+    """Used since delivery sensor.
 
-    v3.0.7: Now uses the centralized _calculate_used_since_delivery() helper
+    v3.0.7: Uses the centralized _calculate_used_since_delivery() helper
     which properly looks up the pre-delivery level.
+
+    v3.1.1: Uses post_fill_gallons from tank monitor as the primary baseline
+    when available (level-jump trigger path). Falls back to
+    pre_delivery_level + last_delivery_gallons (v3.1.0 / API path) otherwise.
+    See _calculate_used_since_delivery() for full priority order and rationale.
     """
 
     _attr_name = "Used Since Last Delivery"
@@ -591,23 +664,25 @@ class PropaneUsedSinceDeliverySensor(AmeriGasSensorBase):
 
     @property
     def native_value(self) -> float | None:
-        """Return gallons used with auto-captured pre-delivery level."""
+        """Return gallons used since delivery."""
         used, method = self._calculate_used_since_delivery()
         self._calculation_method = method
 
         # Calculate starting level for attributes
+        post_fill = self._get_post_fill_gallons()
         pre_delivery = self._get_pre_delivery_level()
         last_delivery = self.coordinator.data.get("last_delivery_gallons") or 0
         tank_size = self.coordinator.data.get("tank_size") or DEFAULT_TANK_SIZE
 
-        if pre_delivery and pre_delivery > 0:
+        if post_fill:
+            self._starting_level = post_fill
+        elif pre_delivery and pre_delivery > 0:
             self._starting_level = min(pre_delivery + last_delivery, tank_size)
         elif last_delivery > 0:
             if last_delivery < 50:
-                estimated_before = tank_size * 0.65
+                self._starting_level = min(tank_size * 0.65 + last_delivery, tank_size)
             else:
-                estimated_before = tank_size * 0.20
-            self._starting_level = min(estimated_before + last_delivery, tank_size)
+                self._starting_level = min(tank_size * 0.20 + last_delivery, tank_size)
         else:
             self._starting_level = tank_size * DEFAULT_FILL_PERCENTAGE
 
@@ -618,6 +693,7 @@ class PropaneUsedSinceDeliverySensor(AmeriGasSensorBase):
         """Return extra attributes."""
         last_delivery = self.coordinator.data.get("last_delivery_gallons") or 0
         pre_delivery = self._get_pre_delivery_level()
+        post_fill = self._get_post_fill_gallons()
 
         attrs = {
             "calculation_method": self._calculation_method,
@@ -625,9 +701,12 @@ class PropaneUsedSinceDeliverySensor(AmeriGasSensorBase):
             "calculated_starting_level": round(self._starting_level, 2),
         }
 
-        if pre_delivery and pre_delivery > 0:
+        if post_fill:
+            attrs["post_fill_gallons"] = round(post_fill, 2)
+            attrs["accuracy"] = "100% (tank monitor)"
+        elif pre_delivery and pre_delivery > 0:
             attrs["pre_delivery_level"] = round(pre_delivery, 2)
-            attrs["accuracy"] = "100% (auto-captured)"
+            attrs["accuracy"] = "~95% (API, pending portal update)"
         elif self._calculation_method == "small_delivery_estimate":
             attrs["accuracy"] = "~75% (estimated)"
         elif self._calculation_method == "large_delivery_estimate":
@@ -802,18 +881,18 @@ class PropaneDaysUntilEmptySensor(AmeriGasSensorBase):
 
 class PropaneCostPerGallonSensor(AmeriGasSensorBase):
     """Cost per gallon sensor with v2.1.0 improvements."""
-    
+
     _attr_name = "Cost Per Gallon"
     _attr_unique_id = "propane_cost_per_gallon"
     _attr_native_unit_of_measurement = "USD/gal"
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = "mdi:currency-usd"
-    
+
     @property
     def native_value(self) -> float | None:
         """Return cost per gallon."""
         return self._calculate_cost_per_gallon()
-    
+
     @property
     def available(self) -> bool:
         """Return availability."""
@@ -823,23 +902,23 @@ class PropaneCostPerGallonSensor(AmeriGasSensorBase):
 
 class PropaneCostPerCubicFootSensor(AmeriGasSensorBase):
     """Cost per cubic foot sensor."""
-    
+
     _attr_name = "Cost Per Cubic Foot"
     _attr_unique_id = "propane_cost_per_cubic_foot"
     _attr_native_unit_of_measurement = "USD/ft³"
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = "mdi:currency-usd"
-    
+
     @property
     def native_value(self) -> float | None:
         """Return cost per cubic foot."""
         cost_per_gallon = self._calculate_cost_per_gallon()
-        
+
         if cost_per_gallon is None:
             return None
-        
+
         return round(cost_per_gallon / GALLONS_TO_CUBIC_FEET, 4)
-    
+
     @property
     def available(self) -> bool:
         """Return availability."""
@@ -859,40 +938,40 @@ class PropaneCostSinceDeliverySensor(AmeriGasSensorBase):
     _attr_device_class = SensorDeviceClass.MONETARY
     _attr_state_class = SensorStateClass.TOTAL
     _attr_icon = "mdi:cash"
-    
+
     @property
     def native_value(self) -> float | None:
         """Return cost since delivery."""
         used, _ = self._calculate_used_since_delivery()
         cost = self._calculate_cost_per_gallon()
-        
+
         if used is None or cost is None or cost == 0:
             return None
-        
+
         return round(used * cost, 2)
-    
+
     @property
     def available(self) -> bool:
         """Return availability."""
         used, _ = self._calculate_used_since_delivery()
         cost = self._calculate_cost_per_gallon()
         return used is not None and cost is not None and cost > 0
-    
+
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return extra attributes."""
         used, method = self._calculate_used_since_delivery()
         cost = self._calculate_cost_per_gallon()
-        
+
         attrs = {
             "gallons_used": used,
             "cost_per_gallon": cost,
             "calculation_method": method,
         }
-        
+
         if used and cost:
             attrs["calculation"] = f"{used:.2f} gal × ${cost:.2f}/gal = ${used * cost:.2f}"
-        
+
         return attrs
 
 
@@ -907,14 +986,14 @@ class PropaneEstimatedRefillCostSensor(AmeriGasSensorBase):
     _attr_native_unit_of_measurement = "USD"
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = "mdi:cash-multiple"
-    
+
     @property
     def native_value(self) -> float | None:
         """Return estimated refill cost."""
         tank_size = self.coordinator.data.get("tank_size") or DEFAULT_TANK_SIZE
         remaining = self._calculate_gallons_remaining()
         cost = self._calculate_cost_per_gallon()
-        
+
         if remaining is None or cost is None:
             return None
 
@@ -925,9 +1004,9 @@ class PropaneEstimatedRefillCostSensor(AmeriGasSensorBase):
             needed = 0
         elif needed > tank_size:
             needed = tank_size
-        
+
         return round(needed * cost, 2)
-    
+
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return extra attributes."""
@@ -1083,7 +1162,7 @@ class PropaneLifetimeGallonsSensor(AmeriGasSensorBase, RestoreEntity):
 
         v3.0.8: State restoration MUST complete before any coordinator updates
         are processed, otherwise we risk overwriting the database with 0.0 and
-        corrupting Energy Dashboard historical data.
+        corrupting Energy Dashboard historical data permanently.
         """
         await super().async_added_to_hass()
 
@@ -1201,7 +1280,7 @@ class PropaneLifetimeGallonsSensor(AmeriGasSensorBase, RestoreEntity):
             "largest_consumption": round(self._largest_consumption, 2),
             "threshold_gallons": NOISE_THRESHOLD_GALLONS,
             "restoration_complete": self._restoration_complete,  # v3.0.8: Debug aid
-            "version": "3.0.12",
+            "version": "3.1.1",
         }
 
 
@@ -1246,5 +1325,5 @@ class PropaneLifetimeEnergySensor(AmeriGasSensorBase):
             "conversion_factor": GALLONS_TO_CUBIC_FEET,
             "lifetime_gallons": gallons if gallons is not None else 0.0,
             "formula": f"{gallons if gallons else 0.0} gal × {GALLONS_TO_CUBIC_FEET} ft³/gal",
-            "version": "3.0.12",
+            "version": "3.1.1",
         }
