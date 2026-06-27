@@ -27,7 +27,7 @@ NEXT_DELIVERY_DATE: Final = "next_delivery_date"
 AUTO_PAY: Final = "auto_pay"
 PAPERLESS: Final = "paperless"
 ACCOUNT_NUMBER: Final = "account_number"
-SERVICE_ADDRESS: Final = "service_address"
+DELIVERY_ADDRESS: Final = "delivery_address"
 
 # Calculated Sensor Keys
 GALLONS_REMAINING: Final = "gallons_remaining"

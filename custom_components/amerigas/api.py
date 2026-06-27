@@ -235,12 +235,12 @@ class AmeriGasAPI:
         terms_match = re.search(r'\d+', str(payment_terms_str))
         payment_terms_days = int(terms_match.group()) if terms_match else 30
 
-        # Build service address
+        # Build delivery address
         street = account_data.get('Street', '')
         city = account_data.get('City', '')
         state_code = account_data.get('State', '')
         zip_code = account_data.get('Zip', '')
-        service_address = f"{street}, {city}, {state_code} {zip_code}" if all([street, city, state_code, zip_code]) else None
+        delivery_address = f"{street}, {city}, {state_code} {zip_code}" if all([street, city, state_code, zip_code]) else None
 
         return {
             # Tank Info
@@ -271,7 +271,7 @@ class AmeriGasAPI:
             'account_number': account_data.get('ShipToAccount', 'Unknown'),
 
             # Address
-            'service_address': service_address,
+            'delivery_address': delivery_address,
             'street': street,
             'city': city,
             'state': state_code,
