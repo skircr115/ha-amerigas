@@ -63,6 +63,7 @@ async def async_setup_entry(
         AmeriGasPaperlessSensor(coordinator, entry.entry_id),
         AmeriGasAccountNumberSensor(coordinator, entry.entry_id),
         AmeriGasServiceAddressSensor(coordinator, entry.entry_id),
+        AmeriGasDeliveryAddressSensor(coordinator, entry.entry_id),
     ]
 
     # Calculated sensors
@@ -611,6 +612,20 @@ class AmeriGasServiceAddressSensor(AmeriGasSensorBase):
             "state": self.coordinator.data.get("state"),
             "zip": self.coordinator.data.get("zip"),
         }
+
+
+class AmeriGasDeliveryAddressSensor(AmeriGasSensorBase):
+    """Delivery address sensor."""
+
+    _attr_name = "Delivery Address"
+    _attr_unique_id = "amerigas_delivery_address"
+    _attr_icon = "mdi:home-map-marker"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def native_value(self) -> str | None:
+        """Return delivery address."""
+        return self.coordinator.data.get("delivery_address")
 
 
 # =============================================================================

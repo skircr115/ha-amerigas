@@ -119,7 +119,14 @@ class AmeriGasAPI:
         if not match:
             raise AmeriGasAPIError("Could not find accountSummaryViewModel in page")
 
-        return json.loads(match.group(1))
+        account_data = json.loads(match.group(1))
+
+        # Also extract the HTML-rendered Delivery Address which is explicitly separate from the Street field in some cases
+        delivery_address_match = re.search(r'Delivery Address:.*?<span>(.*?)</span>', dashboard_text, re.DOTALL | re.IGNORECASE)
+        if delivery_address_match:
+            account_data['DeliveryAddressHTML'] = delivery_address_match.group(1).strip()
+
+        return account_data
 
     def _parse_account_data(self, account_data: dict[str, Any]) -> dict[str, Any]:
         """Parse raw account data into clean format."""
@@ -242,6 +249,9 @@ class AmeriGasAPI:
         zip_code = account_data.get('Zip', '')
         service_address = f"{street}, {city}, {state_code} {zip_code}" if all([street, city, state_code, zip_code]) else None
 
+        # Delivery address is explicitly rendered in the HTML for some customers where "service address" is their billing address
+        delivery_address = account_data.get('DeliveryAddressHTML', service_address)
+
         return {
             # Tank Info
             'tank_level': safe_int(account_data.get('ForecastTankLevel'), 0),
@@ -272,6 +282,7 @@ class AmeriGasAPI:
 
             # Address
             'service_address': service_address,
+            'delivery_address': delivery_address,
             'street': street,
             'city': city,
             'state': state_code,
