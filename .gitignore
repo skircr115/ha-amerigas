@@ -22,8 +22,6 @@ ENV/
 Thumbs.db
 
 # Test files
-test_*.py
-*_test.py
 tests/__pycache__/
 
 # Secrets (DO NOT COMMIT)
