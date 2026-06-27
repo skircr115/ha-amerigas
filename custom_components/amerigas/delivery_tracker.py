@@ -48,6 +48,7 @@ class DeliveryTracker:
         """Initialize the delivery tracker."""
         self.hass = hass
         self.coordinator = coordinator
+        self._entry_id = entry_id
         self.entry_id = entry_id
 
         self._last_known_delivery_date: str | None = None
@@ -223,15 +224,9 @@ class DeliveryTracker:
 
             entity_reg = er.async_get(self.hass)
 
-            target_entity_id = None
-            for entity in entity_reg.entities.values():
-                if (
-                    entity.unique_id
-                    and entity.unique_id.endswith("_pre_delivery_level")
-                    and entity.platform == DOMAIN
-                ):
-                    target_entity_id = entity.entity_id
-                    break
+            target_entity_id = entity_reg.async_get_entity_id(
+                "number", DOMAIN, f"{self._entry_id}_pre_delivery_level"
+            )
 
             if not target_entity_id:
                 _LOGGER.error("Could not find pre-delivery level number entity to update.")

@@ -106,12 +106,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             entity_reg = er.async_get(hass)
             
             # Find the pre-delivery level number entity by unique_id
-            target_entity_id = None
-            for entity in entity_reg.entities.values():
-                if entity.unique_id and entity.unique_id.endswith("_pre_delivery_level"):
-                    if entity.platform == DOMAIN:
-                        target_entity_id = entity.entity_id
-                        break
+            target_entity_id = entity_reg.async_get_entity_id(
+                "number", DOMAIN, f"{entry.entry_id}_pre_delivery_level"
+            )
             
             if not target_entity_id:
                 _LOGGER.error("Could not find pre-delivery level number entity")
