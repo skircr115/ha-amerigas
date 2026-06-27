@@ -100,6 +100,7 @@ class AmeriGasSensorBase(CoordinatorEntity, SensorEntity):
     def __init__(self, coordinator: DataUpdateCoordinator, entry_id: str) -> None:
         """Initialize the sensor."""
         super().__init__(coordinator)
+        self._entry_id = entry_id
         self._attr_device_info = {
             "identifiers": {(DOMAIN, entry_id)},
             "name": "AmeriGas Propane",
@@ -122,12 +123,9 @@ class AmeriGasSensorBase(CoordinatorEntity, SensorEntity):
             from homeassistant.helpers import entity_registry as er
 
             entity_reg = er.async_get(self.hass)
-
-            for entity in entity_reg.entities.values():
-                if entity.unique_id and entity.unique_id.endswith("_pre_delivery_level"):
-                    if entity.platform == DOMAIN:
-                        self._pre_delivery_entity_id = entity.entity_id
-                        break
+            self._pre_delivery_entity_id = entity_reg.async_get_entity_id(
+                "number", DOMAIN, f"{self._entry_id}_pre_delivery_level"
+            )
 
             # Set up listener for pre-delivery level changes
             if self._pre_delivery_entity_id:
@@ -174,18 +172,18 @@ class AmeriGasSensorBase(CoordinatorEntity, SensorEntity):
             from homeassistant.helpers import entity_registry as er
 
             entity_reg = er.async_get(self.hass)
+            entity_id = entity_reg.async_get_entity_id(
+                "number", DOMAIN, f"{self._entry_id}_pre_delivery_level"
+            )
 
-            for entity in entity_reg.entities.values():
-                if entity.unique_id and entity.unique_id.endswith("_pre_delivery_level"):
-                    if entity.platform == DOMAIN:
-                        if state := self.hass.states.get(entity.entity_id):
-                            try:
-                                value = float(state.state)
-                                if value > 0:
-                                    return value
-                            except (ValueError, TypeError):
-                                pass
-                        break
+            if entity_id:
+                if state := self.hass.states.get(entity_id):
+                    try:
+                        value = float(state.state)
+                        if value > 0:
+                            return value
+                    except (ValueError, TypeError):
+                        pass
         except Exception as e:
             _LOGGER.debug(f"Could not get pre-delivery level: {e}")
 
