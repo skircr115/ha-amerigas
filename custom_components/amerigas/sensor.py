@@ -13,7 +13,6 @@ from homeassistant.components.sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     PERCENTAGE,
-    Platform,
     UnitOfEnergy,
     UnitOfVolume,
     UnitOfVolumeFlowRate,
@@ -45,21 +44,6 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up AmeriGas sensors based on a config entry."""
-    from homeassistant.helpers import entity_registry as er
-
-    # Migrate old service_address sensor to delivery_address
-    entity_reg = er.async_get(hass)
-
-    # Try both with and without entry_id prefix in case the integration ever used either
-    for old_unique_id, new_unique_id in [
-        ("amerigas_service_address", "amerigas_delivery_address"),
-        (f"{entry.entry_id}_amerigas_service_address", f"{entry.entry_id}_amerigas_delivery_address")
-    ]:
-        old_entity_id = entity_reg.async_get_entity_id(Platform.SENSOR, DOMAIN, old_unique_id)
-        if old_entity_id:
-            _LOGGER.debug(f"Migrating AmeriGas sensor unique_id from {old_unique_id} to {new_unique_id}")
-            entity_reg.async_update_entity(old_entity_id, new_unique_id=new_unique_id)
-
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
 
     # Base sensors from API
@@ -78,6 +62,7 @@ async def async_setup_entry(
         AmeriGasAutoPaySensor(coordinator, entry.entry_id),
         AmeriGasPaperlessSensor(coordinator, entry.entry_id),
         AmeriGasAccountNumberSensor(coordinator, entry.entry_id),
+        AmeriGasServiceAddressSensor(coordinator, entry.entry_id),
         AmeriGasDeliveryAddressSensor(coordinator, entry.entry_id),
     ]
 
@@ -605,6 +590,30 @@ class AmeriGasAccountNumberSensor(AmeriGasSensorBase):
         return self.coordinator.data.get("account_number")
 
 
+class AmeriGasServiceAddressSensor(AmeriGasSensorBase):
+    """Service address sensor."""
+
+    _attr_name = "Service Address"
+    _attr_unique_id = "amerigas_service_address"
+    _attr_icon = "mdi:home-map-marker"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def native_value(self) -> str | None:
+        """Return service address."""
+        return self.coordinator.data.get("service_address")
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return extra attributes."""
+        return {
+            "street": self.coordinator.data.get("street"),
+            "city": self.coordinator.data.get("city"),
+            "state": self.coordinator.data.get("state"),
+            "zip": self.coordinator.data.get("zip"),
+        }
+
+
 class AmeriGasDeliveryAddressSensor(AmeriGasSensorBase):
     """Delivery address sensor."""
 
@@ -617,16 +626,6 @@ class AmeriGasDeliveryAddressSensor(AmeriGasSensorBase):
     def native_value(self) -> str | None:
         """Return delivery address."""
         return self.coordinator.data.get("delivery_address")
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        """Return extra attributes."""
-        return {
-            "street": self.coordinator.data.get("street"),
-            "city": self.coordinator.data.get("city"),
-            "state": self.coordinator.data.get("state"),
-            "zip": self.coordinator.data.get("zip"),
-        }
 
 
 # =============================================================================

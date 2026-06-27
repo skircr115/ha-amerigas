@@ -119,7 +119,14 @@ class AmeriGasAPI:
         if not match:
             raise AmeriGasAPIError("Could not find accountSummaryViewModel in page")
 
-        return json.loads(match.group(1))
+        account_data = json.loads(match.group(1))
+
+        # Also extract the HTML-rendered Delivery Address which is explicitly separate from the Street field in some cases
+        delivery_address_match = re.search(r'Delivery Address:.*?<span>(.*?)</span>', dashboard_text, re.DOTALL | re.IGNORECASE)
+        if delivery_address_match:
+            account_data['DeliveryAddressHTML'] = delivery_address_match.group(1).strip()
+
+        return account_data
 
     def _parse_account_data(self, account_data: dict[str, Any]) -> dict[str, Any]:
         """Parse raw account data into clean format."""
@@ -235,12 +242,15 @@ class AmeriGasAPI:
         terms_match = re.search(r'\d+', str(payment_terms_str))
         payment_terms_days = int(terms_match.group()) if terms_match else 30
 
-        # Build delivery address
+        # Build service address
         street = account_data.get('Street', '')
         city = account_data.get('City', '')
         state_code = account_data.get('State', '')
         zip_code = account_data.get('Zip', '')
-        delivery_address = f"{street}, {city}, {state_code} {zip_code}" if all([street, city, state_code, zip_code]) else None
+        service_address = f"{street}, {city}, {state_code} {zip_code}" if all([street, city, state_code, zip_code]) else None
+
+        # Delivery address is explicitly rendered in the HTML for some customers where "service address" is their billing address
+        delivery_address = account_data.get('DeliveryAddressHTML', service_address)
 
         return {
             # Tank Info
@@ -271,6 +281,7 @@ class AmeriGasAPI:
             'account_number': account_data.get('ShipToAccount', 'Unknown'),
 
             # Address
+            'service_address': service_address,
             'delivery_address': delivery_address,
             'street': street,
             'city': city,
