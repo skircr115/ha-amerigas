@@ -51,10 +51,10 @@ class AmeriGasAPI:
         """Fetch data from AmeriGas portal."""
         try:
             # Login and get dashboard data
-            account_data = await self._async_fetch_dashboard()
+            account_data, dashboard_html = await self._async_fetch_dashboard()
 
             # Parse and return clean data
-            return self._parse_account_data(account_data)
+            return self._parse_account_data(account_data, dashboard_html)
 
         except aiohttp.ClientError as err:
             _LOGGER.error(f"Network error: {err}")
@@ -66,7 +66,7 @@ class AmeriGasAPI:
             # Close session after each fetch to prevent unclosed connection warnings
             await self.close()
 
-    async def _async_fetch_dashboard(self) -> dict[str, Any]:
+    async def _async_fetch_dashboard(self) -> tuple[dict[str, Any], str]:
         """Login and fetch dashboard data."""
         session = await self._get_session()
         
@@ -119,9 +119,9 @@ class AmeriGasAPI:
         if not match:
             raise AmeriGasAPIError("Could not find accountSummaryViewModel in page")
 
-        return json.loads(match.group(1))
+        return json.loads(match.group(1)), dashboard_text
 
-    def _parse_account_data(self, account_data: dict[str, Any]) -> dict[str, Any]:
+    def _parse_account_data(self, account_data: dict[str, Any], dashboard_html: str | None = None) -> dict[str, Any]:
         """Parse raw account data into clean format."""
         # Helper functions
         def safe_float(value, default=0.0):
@@ -235,12 +235,45 @@ class AmeriGasAPI:
         terms_match = re.search(r'\d+', str(payment_terms_str))
         payment_terms_days = int(terms_match.group()) if terms_match else 30
 
-        # Build service address
+        # Build service address from accountSummaryViewModel JSON (Street/City/State/Zip)
         street = account_data.get('Street', '')
         city = account_data.get('City', '')
         state_code = account_data.get('State', '')
         zip_code = account_data.get('Zip', '')
         service_address = f"{street}, {city}, {state_code} {zip_code}" if all([street, city, state_code, zip_code]) else None
+
+        # Build delivery address from dashboard HTML — customers may have a separate
+        # delivery address that only appears in page markup, not in accountSummaryViewModel.
+        # Two locations are checked in priority order:
+        #   1. "Delivery Address:" <span> — single element with full formatted address
+        #   2. aria-label="Street/City/State/Zipcode" <label> cluster
+        delivery_address = None
+        if dashboard_html:
+            # Strategy 1: "Delivery Address:" span — most reliable for will-call accounts
+            delivery_span = re.search(
+                r'Delivery Address:</div>\s*'
+                r'<div[^>]*>\s*<span>([^<]+)</span>',
+                dashboard_html,
+                re.IGNORECASE,
+            )
+            if delivery_span:
+                delivery_address = delivery_span.group(1).strip()
+                _LOGGER.debug("Delivery address sourced from Delivery Address span: %s", delivery_address)
+
+            # Strategy 2: aria-label label cluster (Street / City / State / Zipcode)
+            if not delivery_address:
+                s_match = re.search(r'aria-label="Street"[^>]*>\s*([^<]+)<', dashboard_html, re.IGNORECASE)
+                c_match = re.search(r'aria-label="City"[^>]*>\s*([^<]+)<', dashboard_html, re.IGNORECASE)
+                st_match = re.search(r'aria-label="State"[^>]*>\s*([^<]+)<', dashboard_html, re.IGNORECASE)
+                z_match = re.search(r'aria-label="Zipcode"[^>]*>\s*([^<]+)<', dashboard_html, re.IGNORECASE)
+                if s_match and c_match and st_match and z_match:
+                    h_street = s_match.group(1).strip()
+                    h_city = c_match.group(1).strip().rstrip(',').strip()
+                    h_state = st_match.group(1).strip()
+                    h_zip = z_match.group(1).strip()
+                    if all([h_street, h_city, h_state, h_zip]):
+                        delivery_address = f"{h_street}, {h_city}, {h_state} {h_zip}"
+                        _LOGGER.debug("Delivery address sourced from aria-label labels: %s", delivery_address)
 
         return {
             # Tank Info
@@ -272,6 +305,7 @@ class AmeriGasAPI:
 
             # Address
             'service_address': service_address,
+            'delivery_address': delivery_address,
             'street': street,
             'city': city,
             'state': state_code,

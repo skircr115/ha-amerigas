@@ -9,35 +9,21 @@
 
 ---
 
-## ✨ What's New in v3.1.1
+## ✨ What's New in v3.2.0
 
-### 🐛 Portal-Lag-Immune Delivery Detection
+### 🐛 Delivery Address Sensor for Will-Call Customers
 
-The automatic pre-delivery level capture now correctly handles cases where the AmeriGas portal updates `last_delivery_date` and `last_delivery_gallons` in separate API responses. Previously, if the date updated first, the capture would fire using the stale gallons figure from the prior delivery, producing a badly wrong pre-delivery level that cascaded into incorrect values for Used Since Delivery, Daily Average Usage, Days Until Empty, Cost Since Delivery, and Days Remaining Difference.
+Will-call customers with a billing address separate from their tank location were seeing the local AmeriGas district office address in `sensor.amerigas_propane_service_address` rather than their actual tank address. This is a data limitation of `accountSummaryViewModel` — for will-call accounts, that JSON blob contains district billing fields, not the customer's delivery address.
 
-The date-change trigger now defers capture until both values have updated in the same poll. A second, telemetry-first level-jump trigger fires immediately when the tank monitor reports a ≥ 10 gallon increase between coordinator polls, capturing pre-fill and post-fill directly from the tank monitor — entirely independent of portal lag.
+A new `sensor.amerigas_propane_delivery_address` sensor is added. It parses the delivery address directly from the dashboard HTML, capturing the actual tank location regardless of account type. `sensor.amerigas_propane_service_address` is unchanged.
 
-### 🐛 Cost Per Gallon After Delivery
+### ⚡ Entity Registry Lookup Optimization
 
-`sensor.propane_cost_per_gallon` now correctly reflects the current delivery cost immediately after a fill, without waiting for the invoice to be paid. If `last_payment_date` predates `last_delivery_date`, the sensor uses `account_balance` (preferred) or `amount_due` as the cost basis. It reverts to the standard `last_payment_amount` calculation automatically once payment is recorded.
+Pre-delivery level entity lookups now use `async_get_entity_id()` instead of scanning the full entity registry on every call. No behavioral change — this is a performance and correctness improvement.
 
----
+### 🧪 Initial Unit Test Coverage
 
-## ✨ What's New in v3.1.0
-
-### 🔐 Update Credentials Without Reinstalling
-
-You can now update your AmeriGas username or password directly from the integration's Configure dialog — no need to delete and re-add the integration. Go to **Settings → Devices & Services → AmeriGas → Configure** and enter your updated credentials. The change takes effect on the next data refresh with no restart required and no loss of historical data.
-
-### 📊 Daily Average Usage — Proper Unit & Device Class
-
-`sensor.propane_daily_average_usage` now uses `gal/d` (gallons per day) with `SensorDeviceClass.VOLUME_FLOW_RATE`, the correct HA representation for a flow rate.
-
-**Migration note:** If you had this sensor tracked in the Statistics database before v3.1.0, Home Assistant will show a one-time unit-change prompt under **Developer Tools → Statistics**. Accepting it is safe and expected.
-
-### 💳 Payment Date & Terms Improvements
-
-`sensor.amerigas_last_payment_date` now correctly uses `SensorDeviceClass.TIMESTAMP` end-to-end. `sensor.amerigas_amount_due` gains a `payment_terms_days` integer attribute available for automations.
+Added `tests/` package with boundary condition tests for `_calculate_gallons_remaining` and API initialization.
 
 ---
 
@@ -97,7 +83,7 @@ If your password changes, go to **Settings → Devices & Services → AmeriGas �
 
 ### What Gets Created
 
-**API sensors (15):** tank level, tank size, days remaining, amount due, account balance, last/next delivery date and gallons, last payment date/amount, last tank reading, auto-pay status, paperless billing, account number, service address
+**API sensors (16):** tank level, tank size, days remaining, amount due, account balance, last/next delivery date and gallons, last payment date/amount, last tank reading, auto-pay status, paperless billing, account number, service address, delivery address
 
 **Calculated sensors (11):** gallons remaining, used since last delivery, energy consumption (display), daily average usage, days until empty, days since last delivery, cost per gallon, cost per cubic foot, cost since last delivery, estimated refill cost, days remaining difference
 
@@ -174,6 +160,8 @@ Data refreshes automatically at **00:00, 06:00, 12:00, and 18:00** daily, plus i
 
 ## 🔧 Troubleshooting
 
+**Service address showing wrong address (Billing address instead of your tank location)** — Fixed in v3.2.0 for some customers. After updating, use `sensor.amerigas_propane_delivery_address` for your tank location. `sensor.amerigas_propane_service_address` reflects the `accountSummaryViewModel` JSON data and is unchanged.
+
 **Sensors show wrong values right after a delivery** — If the integration was not running at delivery time (e.g. you just installed v3.1.1), the level-jump trigger could not fire. Set the pre-delivery level manually: `amerigas.set_pre_delivery_level` with the tank level in gallons immediately before the delivery. Sensors correct immediately.
 
 **Cost per gallon looks wrong after a delivery** — Expected until the invoice is paid. v3.1.1 automatically uses `account_balance` or `amount_due` as the cost basis when `last_payment_date` predates `last_delivery_date`. Once payment is recorded, it reverts to the standard calculation.
@@ -233,7 +221,7 @@ entities:
 
 ## 🔄 Upgrading
 
-### From any v3.0.x or v3.1.x
+### From any v3.0.x, v3.1.x, or v3.2.x
 No breaking changes. Update via HACS and restart. All sensors, entities, and automations continue working without modification.
 
 ### From v2.x (pyscript)
