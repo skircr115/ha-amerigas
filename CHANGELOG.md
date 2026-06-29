@@ -5,6 +5,64 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.0] - 2026-06-29
+
+### 🐛 Bug Fix — Service Address Sensor Showing Billing Address for Some Customers (Fixes #26)
+
+Customers with a billing address separate from their tank location saw the billing address in `sensor.amerigas_propane_service_address` instead of their actual service address. This is because `accountSummaryViewModel` — the only data source previously parsed — stores the customer billing address rather than the customer's tank address for some accounts. The customer's actual delivery address may only appear in the dashboard HTML markup for these customers.
+
+**Fix:** A new `sensor.amerigas_propane_delivery_address` sensor is added. It parses the delivery address directly from the dashboard HTML using two strategies in priority order:
+
+1. **"Delivery Address:" span** — extracts the pre-formatted full address from the `<span>` inside the delivery confirmation modal (e.g. `STREET, CITY STATE ZIP`). Most reliable for accounts with separate billing and delivery addresses.
+2. **`aria-label` label cluster** — assembles the address from the four `<label aria-label="Street/City/State/Zipcode">` elements in the address detail header. Secondary fallback.
+
+`sensor.amerigas_propane_service_address` is unchanged — it continues to reflect `Street`/`City`/`State`/`Zip` from `accountSummaryViewModel`, which is correct for auto-delivery customers. The new delivery address sensor will be `None`/unavailable on accounts where neither HTML pattern is present.
+
+### ⚡ Performance — Entity Registry Lookup Optimization
+
+Replaced full entity registry iteration (`for entity in entity_reg.entities.values()`) with direct `async_get_entity_id()` lookups in three locations. The old approach scanned every registered entity on every pre-delivery level lookup; the new approach resolves the target entity ID in O(1) using the known domain, platform, and unique ID.
+
+**Affected files:** `__init__.py`, `sensor.py` (`_setup_pre_delivery_listener` and `_get_pre_delivery_level`), `delivery_tracker.py` (`_capture_pre_delivery_level_from_api`).
+
+### 🧪 Tests — Initial Test Suite
+
+Added `tests/` package with initial unit test coverage:
+
+- **`test_api.py`** — `AmeriGasAPI` initialization (username, password, session state)
+- **`test_sensor.py`** — `_calculate_gallons_remaining` boundary conditions: `tank_level` at 0, negative, 100, over 100, `None`; `tank_size` at `None` (falls back to `DEFAULT_TANK_SIZE`), 0 (falsy → `DEFAULT_TANK_SIZE`), negative (explicit guard returns `None`); normal operation at 50%
+
+### 🔧 Technical Changes
+
+**`api.py` — `_async_fetch_dashboard()`**
+- Return type changed from `dict[str, Any]` to `tuple[dict[str, Any], str]`
+- Now returns `(account_data, dashboard_html)` — raw HTML preserved for downstream parsing
+
+**`api.py` — `async_get_data()`**
+- Unpacks the tuple from `_async_fetch_dashboard()`
+- Passes `dashboard_html` to `_parse_account_data()`
+
+**`api.py` — `_parse_account_data()`**
+- Signature gains `dashboard_html: str | None = None`
+- Adds two-strategy HTML delivery address extraction
+- `service_address` build logic unchanged
+- `delivery_address` added to return dict
+
+**`sensor.py` — `AmeriGasDeliveryAddressSensor`**
+- New class: name `"Delivery Address"`, unique ID `amerigas_delivery_address`, icon `mdi:map-marker`, `EntityCategory.DIAGNOSTIC`
+- Reads `delivery_address` key from coordinator data
+- Registered in `async_setup_entry`
+
+**`sensor.py` / `__init__.py` / `delivery_tracker.py`**
+- `entity_reg.async_get_entity_id("number", DOMAIN, f"{entry_id}_pre_delivery_level")` replaces all three full-scan loops
+
+### 🔄 Migration Notes
+
+No breaking changes. Update via HACS and restart. `sensor.amerigas_propane_service_address` is unchanged.
+
+Customers with separate delivery location: after updating, `sensor.amerigas_propane_delivery_address` will appear with your tank's address. Other customers: the sensor will show the same address as `service_address` if the HTML patterns match, or be unavailable if they don't — this is expected and does not affect any other sensors.
+
+---
+
 ## [3.1.1] - 2026-03-10
 
 ### 🐛 Bug Fix — Stale Gallons Captured on Date-Change Trigger
