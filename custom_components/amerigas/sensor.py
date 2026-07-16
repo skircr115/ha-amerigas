@@ -248,6 +248,9 @@ class AmeriGasSensorBase(CoordinatorEntity, SensorEntity):
         the tank monitor is a consistent instrument measuring the same vessel
         across every event.
         """
+        if not self.coordinator.data:
+            return None, "unknown"
+
         tank_size = self.coordinator.data.get("tank_size") or DEFAULT_TANK_SIZE
         tank_level = self.coordinator.data.get("tank_level") or 0
 

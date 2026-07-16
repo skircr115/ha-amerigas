@@ -53,3 +53,62 @@ def test_calculate_gallons_remaining_bounds():
     coordinator.data = {"tank_size": -10, "tank_level": 50}
     # It will use -10, but the code checks `if tank_size <= 0: return None`
     assert sensor._calculate_gallons_remaining() is None
+
+def test_calculate_used_since_delivery():
+    """Test priority order and edge cases for _calculate_used_since_delivery."""
+    coordinator = MagicMock()
+    sensor = AmeriGasSensorBase(coordinator, "test_entry")
+
+    # 1. No data
+    coordinator.data = {}
+    assert sensor._calculate_used_since_delivery() == (None, "unknown")
+
+    # Mock the priority getters for the rest of the tests
+    sensor._get_post_fill_gallons = MagicMock(return_value=None)
+    sensor._get_pre_delivery_level = MagicMock(return_value=None)
+
+    # 2. Priority 1: post_fill_gallons (tank monitor)
+    coordinator.data = {"tank_size": 100, "tank_level": 40}  # current = 40
+    sensor._get_post_fill_gallons.return_value = 85.0
+    # used = 85.0 - 40.0 = 45.0
+    assert sensor._calculate_used_since_delivery() == (45.0, "tank_monitor")
+    sensor._get_post_fill_gallons.return_value = None  # Reset for next tests
+
+    # 3. Priority 2: pre_delivery_level + last_delivery
+    coordinator.data = {"tank_size": 100, "tank_level": 40, "last_delivery_gallons": 50}
+    sensor._get_pre_delivery_level.return_value = 30.0
+    # starting_level = 30 + 50 = 80. used = 80 - 40 = 40.0
+    assert sensor._calculate_used_since_delivery() == (40.0, "auto_captured")
+
+    # 3b. Priority 2 with cap at tank_size
+    sensor._get_pre_delivery_level.return_value = 60.0
+    # starting_level = 60 + 50 = 110. Capped at 100. used = 100 - 40 = 60.0
+    assert sensor._calculate_used_since_delivery() == (60.0, "auto_captured")
+    sensor._get_pre_delivery_level.return_value = None  # Reset
+
+    # 4. Priority 3: Heuristic based on small delivery (< 50)
+    coordinator.data = {"tank_size": 100, "tank_level": 40, "last_delivery_gallons": 30}
+    # last_delivery < 50 => estimated_before = 100 * 0.65 = 65
+    # starting_level = min(65 + 30, 100) = 95. used = 95 - 40 = 55.0
+    assert sensor._calculate_used_since_delivery() == (55.0, "small_delivery_estimate")
+
+    # 5. Priority 3: Heuristic based on large delivery (>= 50)
+    coordinator.data = {"tank_size": 100, "tank_level": 40, "last_delivery_gallons": 60}
+    # last_delivery >= 50 => estimated_before = 100 * 0.20 = 20
+    # starting_level = min(20 + 60, 100) = 80. used = 80 - 40 = 40.0
+    assert sensor._calculate_used_since_delivery() == (40.0, "large_delivery_estimate")
+
+    # 5b. Priority 3 with cap
+    coordinator.data = {"tank_size": 100, "tank_level": 40, "last_delivery_gallons": 90}
+    # starting_level = min(20 + 90, 100) = 100. used = 100 - 40 = 60.0
+    assert sensor._calculate_used_since_delivery() == (60.0, "large_delivery_estimate")
+
+    # 6. Fallback: Assumed 80% fill
+    coordinator.data = {"tank_size": 100, "tank_level": 40}  # No last_delivery_gallons
+    # starting_level = 100 * 0.8 = 80. used = 80 - 40 = 40.0
+    assert sensor._calculate_used_since_delivery() == (40.0, "assumed_80_percent")
+
+    # 7. Max 0 bound check
+    coordinator.data = {"tank_size": 100, "tank_level": 90}
+    # starting_level = 80. used = 80 - 90 = -10 => Max(0, -10) = 0.0
+    assert sensor._calculate_used_since_delivery() == (0.0, "assumed_80_percent")
