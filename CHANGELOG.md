@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.1] - 2026-08-18
+
+### 🧪 Tests — Expanded Coverage for Used Since Delivery
+
+Added comprehensive unit tests for `_calculate_used_since_delivery` in `tests/test_sensor.py`, covering the method's boundary conditions and normal operation.
+
+**Fix:** Added a guard (`if not self.coordinator.data:`) to `_calculate_used_since_delivery` that returns early instead of raising an `AttributeError` when the coordinator has no data yet (e.g. before the first successful refresh).
+
+### 🔧 Technical Changes
+
+**`sensor.py` — `_calculate_used_since_delivery()`**
+- Added `if not self.coordinator.data:` check to prevent `AttributeError` on missing coordinator data
+
+**`tests/test_sensor.py`**
+- Added `test_calculate_used_since_delivery` covering boundary and normal-operation cases
+
+**`manifest.json`**
+- Version bumped to `3.2.1`
+
+### 🔄 Migration Notes
+
+No breaking changes. Update via HACS and restart. No sensor behavior changes for accounts with normal data — this only affects the (rare) window before the coordinator's first successful poll.
+
+---
+
 ## [3.2.0] - 2026-06-29
 
 ### 🐛 Bug Fix — Service Address Sensor Showing Billing Address for Some Customers (Fixes #26)
