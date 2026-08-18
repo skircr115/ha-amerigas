@@ -9,19 +9,23 @@
 
 ---
 
-## ✨ What's New in v3.2.0
+## ✨ What's New in v3.2.1
 
-### 🐛 Delivery Address Sensor for Will-Call Customers
+### 🧪 Expanded Test Coverage
+
+Added comprehensive tests for `_calculate_used_since_delivery`, including a guard (`if not self.coordinator.data:`) that prevents an `AttributeError` when the coordinator has no data yet. Builds on the `tests/` package introduced in v3.2.0.
+
+### 🐛 Delivery Address Sensor for Will-Call Customers (v3.2.0)
 
 Will-call customers with a billing address separate from their tank location were seeing the local AmeriGas district office address in `sensor.amerigas_propane_service_address` rather than their actual tank address. This is a data limitation of `accountSummaryViewModel` — for will-call accounts, that JSON blob contains district billing fields, not the customer's delivery address.
 
 A new `sensor.amerigas_propane_delivery_address` sensor is added. It parses the delivery address directly from the dashboard HTML, capturing the actual tank location regardless of account type. `sensor.amerigas_propane_service_address` is unchanged.
 
-### ⚡ Entity Registry Lookup Optimization
+### ⚡ Entity Registry Lookup Optimization (v3.2.0)
 
 Pre-delivery level entity lookups now use `async_get_entity_id()` instead of scanning the full entity registry on every call. No behavioral change — this is a performance and correctness improvement.
 
-### 🧪 Initial Unit Test Coverage
+### 🧪 Initial Unit Test Coverage (v3.2.0)
 
 Added `tests/` package with boundary condition tests for `_calculate_gallons_remaining` and API initialization.
 
@@ -222,7 +226,7 @@ entities:
 ## 🔄 Upgrading
 
 ### From any v3.0.x, v3.1.x, or v3.2.x
-No breaking changes. Update via HACS and restart. All sensors, entities, and automations continue working without modification.
+No breaking changes, including the v3.2.1 test-coverage patch. Update via HACS and restart. All sensors, entities, and automations continue working without modification.
 
 ### From v2.x (pyscript)
 See [MIGRATION.md](MIGRATION.md) for detailed instructions.
