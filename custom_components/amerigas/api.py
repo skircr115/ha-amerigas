@@ -7,7 +7,7 @@ import json
 import logging
 import re
 from datetime import datetime
-from typing import Any
+from typing import Any, Final
 
 from homeassistant.util import dt as dt_util
 
@@ -21,7 +21,38 @@ class AmeriGasAPIError(Exception):
 
 
 class AmeriGasAuthError(AmeriGasAPIError):
-    """Authentication error."""
+    """Authentication error — the portal explicitly rejected the credentials as wrong."""
+
+
+class AmeriGasLoginBlockedError(AmeriGasAPIError):
+    """Login request was rejected by the portal for a reason other than bad credentials.
+
+    Added in v3.2.2. Prior to this, any ``success: false`` response from the login
+    endpoint — regardless of the accompanying message — was raised as
+    AmeriGasAuthError and surfaced to the user as "Invalid authentication," even
+    when the credentials were correct. In practice AmeriGas's login endpoint
+    returns a generic "Sorry, we are unable to process your request at this time"
+    message when it suspects automated (non-browser) traffic, which is a distinct
+    failure mode from an actual bad-password rejection ("The User ID or password
+    is incorrect."). This exception lets config_flow.py surface an accurate error
+    to the user instead of telling them their (correct) password is wrong.
+
+    See: https://github.com/skircr115/ha-amerigas/issues/38
+    """
+
+
+# Substrings (matched case-insensitively) that AmeriGas's login endpoint has been
+# observed to return when credentials are genuinely wrong. Any other `success:
+# false` message is treated as AmeriGasLoginBlockedError rather than assumed to be
+# a bad password — see AmeriGasLoginBlockedError docstring above. If AmeriGas adds
+# a new wording for bad credentials that isn't caught here, it will currently be
+# (safely) misclassified as "blocked" rather than "invalid auth"; if that turns
+# out to happen, add the new phrase to this tuple.
+KNOWN_INVALID_CREDENTIAL_PHRASES: Final[tuple[str, ...]] = (
+    "user id or password is incorrect",
+    "incorrect",
+    "invalid credentials",
+)
 
 
 class AmeriGasAPI:
@@ -100,7 +131,24 @@ class AmeriGasAPI:
             login_result = await response.json()
             if not login_result.get('success'):
                 error_msg = login_result.get('message', 'Unknown error')
-                raise AmeriGasAuthError(f"Login failed: {error_msg}")
+                error_msg_lower = error_msg.lower()
+
+                if any(phrase in error_msg_lower for phrase in KNOWN_INVALID_CREDENTIAL_PHRASES):
+                    raise AmeriGasAuthError(f"Login failed: {error_msg}")
+
+                # Not a recognized bad-credentials message. Most commonly this is
+                # AmeriGas's bot-detection response ("Sorry, we are unable to
+                # process your request at this time..."), returned even for
+                # correct credentials when the request doesn't look like it came
+                # from a browser. Log the raw message for diagnosis and raise a
+                # distinct exception so the user isn't told their password is
+                # wrong when it may well be correct. See issue #38.
+                _LOGGER.warning(
+                    "AmeriGas login rejected with an unrecognized message "
+                    "(not a known bad-credentials response): %s",
+                    error_msg,
+                )
+                raise AmeriGasLoginBlockedError(f"Login blocked: {error_msg}")
 
         # Get dashboard
         async with session.get(

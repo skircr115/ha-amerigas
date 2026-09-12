@@ -11,7 +11,12 @@ from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 
-from .api import AmeriGasAPI, AmeriGasAPIError, AmeriGasAuthError
+from .api import (
+    AmeriGasAPI,
+    AmeriGasAPIError,
+    AmeriGasAuthError,
+    AmeriGasLoginBlockedError,
+)
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -37,6 +42,13 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
         await api.async_get_data()
     except AmeriGasAuthError as err:
         raise InvalidAuth from err
+    except AmeriGasLoginBlockedError as err:
+        # v3.2.2: distinct from InvalidAuth — the portal rejected the login
+        # attempt for a reason other than a recognized bad-credentials message
+        # (most commonly bot/automation detection). Must be caught before the
+        # AmeriGasAPIError branch below, since AmeriGasLoginBlockedError is a
+        # subclass of it. See issue #38.
+        raise LoginBlocked from err
     except AmeriGasAPIError as err:
         raise CannotConnect from err
     finally:
@@ -65,6 +77,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "cannot_connect"
             except InvalidAuth:
                 errors["base"] = "invalid_auth"
+            except LoginBlocked:
+                errors["base"] = "login_blocked"
             except Exception:
                 _LOGGER.exception("Unexpected exception")
                 errors["base"] = "unknown"
@@ -117,6 +131,8 @@ class OptionsFlow(config_entries.OptionsFlow):
                 errors["base"] = "cannot_connect"
             except InvalidAuth:
                 errors["base"] = "invalid_auth"
+            except LoginBlocked:
+                errors["base"] = "login_blocked"
             except Exception:
                 _LOGGER.exception("Unexpected exception in options flow")
                 errors["base"] = "unknown"
@@ -151,3 +167,9 @@ class CannotConnect(HomeAssistantError):
 
 class InvalidAuth(HomeAssistantError):
     """Error to indicate there is invalid auth."""
+
+
+class LoginBlocked(HomeAssistantError):
+    """Error to indicate the login attempt was blocked for a reason other than
+    incorrect credentials (most commonly automated-traffic/bot detection on
+    AmeriGas's end). Added in v3.2.2 — see issue #38."""

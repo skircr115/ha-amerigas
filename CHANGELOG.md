@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.2] - 2026-09-07
+
+### 🐛 Bug Fix — Misleading "Invalid Authentication" for Correct Credentials (Fixes #38)
+
+Some users with correct MyAmeriGas credentials saw the config flow fail with a generic "Invalid authentication" error. Root cause: AmeriGas's login endpoint returns `{"success": false}` both when credentials are genuinely wrong *and* when it suspects the request is automated (non-browser) traffic — these are different messages (`"The User ID or password is incorrect..."` vs. `"Sorry, we are unable to process your request at this time..."`), but the integration mapped both to the same `AmeriGasAuthError` → `InvalidAuth`.
+
+**Fix:** `_async_fetch_dashboard()` in `api.py` now checks the login response message against a known set of bad-credentials phrases. A recognized bad-credentials message still raises `AmeriGasAuthError` (→ `invalid_auth`). Any other rejection message — including the bot-detection response — now raises a new `AmeriGasLoginBlockedError` (→ new `login_blocked` error string: *"AmeriGas rejected this login attempt as automated traffic rather than a bad password..."*), and the raw message is logged at `WARNING` for diagnosis.
+
+**Note:** This fix corrects the *error message* shown to the user — it does not change whether the underlying automated-traffic rejection happens in the first place. See v3.2.3 for work on that.
+
+### 🔧 Technical Changes
+
+**`api.py`**
+- Added `AmeriGasLoginBlockedError(AmeriGasAPIError)` exception
+- Added `KNOWN_INVALID_CREDENTIAL_PHRASES` tuple of substrings recognized as genuine bad-credential rejections
+- `_async_fetch_dashboard()`: branches on the login response message instead of always raising `AmeriGasAuthError` on `success: false`; logs the raw message at `WARNING` when it doesn't match a known bad-credentials phrase
+
+**`config_flow.py`**
+- Added `LoginBlocked(HomeAssistantError)` exception
+- `validate_input()` catches `AmeriGasLoginBlockedError` (before the general `AmeriGasAPIError` branch, since it's a subclass) and raises `LoginBlocked`
+- Both `ConfigFlow.async_step_user()` and `OptionsFlow.async_step_init()` catch `LoginBlocked` and set `errors["base"] = "login_blocked"`
+
+**`strings.json` / `translations/en.json`**
+- Added `login_blocked` error string under both `config.error` and `options.error`
+
+**`tests/test_api.py`**
+- Added `test_known_bad_credential_messages_raise_auth_error` and `test_unrecognized_messages_raise_login_blocked` covering the new message-classification logic
+
+**`manifest.json`**
+- Version bumped to `3.2.2`
+
+### 🔄 Migration Notes
+
+No breaking changes. Update via HACS and restart. Existing sensors, entities, and automations are unaffected. Users who were previously blocked by this login issue will now see an accurate error message; the underlying block itself is addressed separately in v3.2.3.
+
+---
+
 ## [3.2.1] - 2026-08-18
 
 ### 🧪 Tests — Expanded Coverage for Used Since Delivery

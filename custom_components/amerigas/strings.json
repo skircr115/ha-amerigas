@@ -13,6 +13,7 @@
     "error": {
       "cannot_connect": "Failed to connect to AmeriGas. Please check your internet connection.",
       "invalid_auth": "Invalid username or password. Please verify your MyAmeriGas credentials.",
+      "login_blocked": "AmeriGas rejected this login attempt as automated traffic rather than a bad password — your credentials may be correct. See the README troubleshooting section (\"Login fails as Invalid authentication despite correct credentials\") for details.",
       "unknown": "Unexpected error occurred. Please try again."
     },
     "abort": {
@@ -33,6 +34,7 @@
     "error": {
       "cannot_connect": "Failed to connect to AmeriGas. Please try again.",
       "invalid_auth": "Invalid email address or password.",
+      "login_blocked": "AmeriGas rejected this login attempt as automated traffic rather than a bad password — your credentials may be correct. See the README troubleshooting section for details.",
       "unknown": "Unexpected error. Check the Home Assistant logs for details."
     }
   },
