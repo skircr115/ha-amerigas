@@ -13,7 +13,8 @@
     "error": {
       "cannot_connect": "Failed to connect to AmeriGas. Please try again.",
       "invalid_auth": "Invalid email address or password.",
-      "unknown": "Unexpected error. Check the Home Assistant logs for details."
+      "unknown": "Unexpected error. Check the Home Assistant logs for details.",
+      "login_blocked": "AmeriGas rejected this login attempt as automated traffic rather than a bad password — your credentials may be correct. See the README troubleshooting section for details."
     },
     "abort": {
       "already_configured": "AmeriGas account is already configured."
@@ -33,7 +34,8 @@
     "error": {
       "cannot_connect": "Failed to connect to AmeriGas. Please try again.",
       "invalid_auth": "Invalid email address or password.",
-      "unknown": "Unexpected error. Check the Home Assistant logs for details."
+      "unknown": "Unexpected error. Check the Home Assistant logs for details.",
+      "login_blocked": "AmeriGas rejected this login attempt as automated traffic rather than a bad password — your credentials may be correct. See the README troubleshooting section for details."
     }
   }
 }

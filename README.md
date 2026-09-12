@@ -9,7 +9,17 @@
 
 ---
 
-## ✨ What's New in v3.2.1
+## ✨ What's New in v3.2.2
+
+### 🐛 Accurate Login Errors — No More False "Invalid Authentication" (Fixes #38)
+
+Some users with **correct** credentials were seeing a generic "Invalid authentication" error when adding the integration. AmeriGas's login endpoint returns the same shape of failure response (`success: false`) both for genuinely wrong credentials and for requests it suspects are automated — previously, the integration treated both cases identically and always reported "Invalid authentication."
+
+The integration now checks the portal's actual rejection message. A recognized bad-credentials message (e.g. *"The User ID or password is incorrect"*) still shows **Invalid username or password**. Any other rejection — most commonly AmeriGas's automated-traffic response, *"Sorry, we are unable to process your request at this time"* — now shows a distinct **AmeriGas rejected this login attempt as automated traffic** error instead, so you're not told to re-check a password that may be correct.
+
+This does not fix the underlying automated-traffic rejection itself — see the Troubleshooting section below and the v3.2.3 notes for that work.
+
+## What's New in v3.2.1
 
 ### 🧪 Expanded Test Coverage
 
@@ -163,6 +173,13 @@ Data refreshes automatically at **00:00, 06:00, 12:00, and 18:00** daily, plus i
 ---
 
 ## 🔧 Troubleshooting
+
+**Login fails with "AmeriGas rejected this login attempt as automated traffic" (or, on v3.2.1 and earlier, a generic "Invalid authentication" even with correct credentials)** — AmeriGas's login endpoint occasionally flags non-browser requests as suspicious traffic and rejects them, independent of whether your username/password are correct. This is not a credentials problem. Things to try:
+- Double check your credentials work by logging in directly at myamerigas.com in a normal browser first.
+- Retry adding the integration — this rejection has been reported to be intermittent for some accounts.
+- Check the Home Assistant logs (`custom_components.amerigas`) for the exact message AmeriGas returned; it's logged at `WARNING` level to help with diagnosis.
+- If this persists, please comment on [issue #38](https://github.com/skircr115/ha-amerigas/issues/38) with your log line (redact your email/username first) — ongoing work to make the login request look more like a real browser is tracked there.
+
 
 **Service address showing wrong address (Billing address instead of your tank location)** — Fixed in v3.2.0 for some customers. After updating, use `sensor.amerigas_propane_delivery_address` for your tank location. `sensor.amerigas_propane_service_address` reflects the `accountSummaryViewModel` JSON data and is unchanged.
 
